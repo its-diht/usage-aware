@@ -89,3 +89,7 @@ bash tests/run.sh                     # bash tests + mod tests (claude plugin te
 claude plugin validate .
 claude --plugin-dir .                 # load this checkout
 ```
+
+## Credits
+
+Built by its-diht with [Claude Code](https://claude.com/claude-code) (Claude Opus 5.5) as co-author.
