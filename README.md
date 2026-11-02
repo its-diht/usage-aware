@@ -9,7 +9,7 @@ Keeps Claude Code aware of your remaining **5-hour** and **7-day** plan usage, a
 
 ## Requirements
 
-- **bash** and **jq** (`sudo apt install jq` / `sudo pacman -S jq` / `brew install jq`). GNU or BSD userland both work.
+- **bash** and **jq** (`sudo apt install jq` / `sudo pacman -S jq` / `brew install jq`). Developed and tested on Linux.
 - A **Claude subscription** (Pro, Max, …). Claude Code only reports `rate_limits` to subscribers; API-key accounts get no data and see "usage unknown".
 - The **Claude Code CLI**. UserPromptSubmit context has been reported not to reach the model in the VS Code extension.
 
