@@ -35,3 +35,19 @@ UA_JQ_DUR='def dur: (if . < 0 then 0 else floor end) as $s
     elif $s >= 3600 then "\($s/3600|floor)h\($s%3600/60|floor)m"
     elif $s >= 60 then "\($s/60|floor)m"
     else "\($s)s" end;'
+
+# Path as Claude should type it. Permission rules match literal text, so keep "~/".
+if [[ -z "${USAGE_AWARE_DIR:-}" ]]; then UA_DISPLAY_DIR="~/.claude/usage-aware"; else UA_DISPLAY_DIR="$UA_DIR"; fi
+
+# Copy plugin scripts to the fixed runtime path when they differ. Arg: plugin root.
+ua_sync() {
+  local root="$1" name src dest tmp
+  mkdir -p "$UA_DIR" || return 1
+  for name in "${UA_SYNC_FILES[@]}"; do
+    case $name in *.sh) src="$root/scripts/$name" ;; *) src="$root/scripts/$name.sh" ;; esac
+    dest="$UA_DIR/$name"
+    [[ -f "$src" ]] || continue
+    cmp -s "$src" "$dest" && continue
+    tmp="$(mktemp "$dest.XXXXXX")" && cp "$src" "$tmp" && chmod 755 "$tmp" && mv -f "$tmp" "$dest" || rm -f "$tmp"
+  done
+}
