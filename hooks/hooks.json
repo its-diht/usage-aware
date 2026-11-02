@@ -1,0 +1,20 @@
+{
+  "description": "usage-aware: inject budgeting policy at session start and the usage line on every prompt",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear|compact|fork",
+        "hooks": [
+          { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/inject-policy.sh\"", "timeout": 10 }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/inject-usage.sh\"", "timeout": 5 }
+        ]
+      }
+    ]
+  }
+}

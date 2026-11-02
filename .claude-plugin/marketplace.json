@@ -1,0 +1,13 @@
+{
+  "name": "usage-aware",
+  "description": "usage-aware plugin for Claude Code",
+  "owner": { "name": "its-diht" },
+  "plugins": [
+    {
+      "name": "usage-aware",
+      "description": "Keeps Claude aware of your remaining 5-hour and 7-day plan usage and budgets work against it.",
+      "version": "0.1.0",
+      "source": "./"
+    }
+  ]
+}
