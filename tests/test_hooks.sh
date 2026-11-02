@@ -17,22 +17,39 @@ setup_dir
 out=$(echo '{}' | bash "$IU")
 assert_contains "no state -> unknown still injected" "usage unknown" "$(jq -r .hookSpecificOutput.additionalContext <<<"$out")"
 
+echo "inject-usage: warns once when the mod isn't feeding data"
+setup_dir; seed
+out=$(echo '{"session_id":"s1"}' | bash "$IU")
+assert_contains "warning when no heartbeat" "mod isn't running" "$(jq -r '.systemMessage // ""' <<<"$out")"
+assert_contains "context still injected" "[usage]" "$(jq -r .hookSpecificOutput.additionalContext <<<"$out")"
+out=$(echo '{"session_id":"s1"}' | bash "$IU")
+assert_eq "same session: not repeated" "" "$(jq -r '.systemMessage // ""' <<<"$out")"
+out=$(echo '{"session_id":"s2"}' | bash "$IU")
+assert_contains "new session: warned again" "mod isn't running" "$(jq -r '.systemMessage // ""' <<<"$out")"
+setup_dir; seed; echo "{\"heartbeat\":$now}" >"$USAGE_AWARE_DIR/mod.json"
+out=$(echo '{"session_id":"s1"}' | bash "$IU")
+assert_eq "fresh heartbeat: no warning" "" "$(jq -r '.systemMessage // ""' <<<"$out")"
+setup_dir; seed; echo "{\"heartbeat\":$((now-90000))}" >"$USAGE_AWARE_DIR/mod.json"
+out=$(echo '{"session_id":"s1"}' | bash "$IU")
+assert_contains "day-old heartbeat: warning" "mod isn't running" "$(jq -r '.systemMessage // ""' <<<"$out")"
+
 echo "inject-policy: sync + policy"
 setup_dir; seed
 plugin=$(mktemp -d); cp -r "$ROOT/scripts" "$plugin/"
 export CLAUDE_PLUGIN_ROOT="$plugin"
 out=$(echo '{"hook_event_name":"SessionStart","source":"startup"}' | bash "$IP"); rc=$?
 assert_eq "exit 0" 0 "$rc"
-for f in tap-statusline usage-status lib.sh; do
+for f in usage-status lib.sh; do
   assert_true "synced $f" test -f "$USAGE_AWARE_DIR/$f"
 done
-assert_true "tap-statusline executable" test -x "$USAGE_AWARE_DIR/tap-statusline"
+assert_true "no statusline script synced" test ! -e "$USAGE_AWARE_DIR/tap-statusline"
 assert_true "usage-status executable" test -x "$USAGE_AWARE_DIR/usage-status"
 assert_eq "synced usage-status runs standalone" "$(bash "$SCRIPTS/usage-status.sh")" "$("$USAGE_AWARE_DIR/usage-status")"
 ctx=$(jq -r .hookSpecificOutput.additionalContext <<<"$out")
 assert_eq "hookEventName" SessionStart "$(jq -r .hookSpecificOutput.hookEventName <<<"$out")"
 for needle in NORMAL CONSERVE WRAP-UP "Account for usage in every plan" "defer or split" "7d" \
-              "$USAGE_AWARE_DIR/usage-status" "before spawning subagents" "[usage] mode: CONSERVE"; do
+              "$USAGE_AWARE_DIR/usage-status" "before spawning subagents" "[usage] mode: CONSERVE" \
+              "on pace to run out" "resets soon" "spend"; do
   assert_contains "policy mentions: $needle" "$needle" "$ctx"
 done
 assert_true "no systemMessage when healthy" test "$(jq -r '.systemMessage // "none"' <<<"$out")" = none
@@ -67,9 +84,6 @@ assert_eq "inject-usage silent" "" "$out"
 out=$(PATH="$fake" "$fake/bash" "$SCRIPTS/usage-status.sh" 2>&1); rc=$?
 assert_eq "usage-status exit 0" 0 "$rc"
 assert_contains "usage-status says jq missing" "jq not found" "$out"
-out=$(echo '{"rate_limits":{"five_hour":{"used_percentage":1,"resets_at":1}}}' | PATH="$fake" "$fake/bash" "$SCRIPTS/tap-statusline.sh" 2>&1); rc=$?
-assert_eq "tap exit 0" 0 "$rc"
-assert_eq "tap prints placeholder" "5h -- · 7d --" "$out"
 out=$(PATH="$fake" "$fake/bash" "$SCRIPTS/set-thresholds.sh" 60 25 2>&1)
 assert_contains "set-thresholds says jq missing" "jq not found" "$out"
 

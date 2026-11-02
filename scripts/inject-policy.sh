@@ -24,6 +24,11 @@ The user's Claude plan has a 5-hour and a 7-day usage window. A usage line like 
 | CONSERVE | ${w}–${c}% left | Small verifiable steps. Avoid fan-outs and subagents. Checkpoint often. |
 | WRAP-UP | < ${w}% left | Finish the current unit. Write a handoff note (done / next / open issues). Ask before starting new work. |
 
+Two adjustments, shown in parentheses after the mode:
+- **(pace: 5h/7d):** at the average rate so far, that window is on pace to run out before it resets ("pace: out in …"), so the mode is at least CONSERVE.
+- **(… resets soon):** a window resetting within 15 min (5h) or 12 h (7d) counts one step less strict, since it's about to refill.
+A \`spend\` window (spend-limit accounts) counts like the others.
+
 Rules:
 - Account for usage in every plan. Before multi-step work, estimate its size against what's left.
 - Say so when you defer or split work because of usage.

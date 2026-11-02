@@ -3,40 +3,35 @@
 source "$(dirname "$0")/helpers.sh"
 IN="$SCRIPTS/install.sh"
 settings=$(mktemp)
+snippet() { sed -n '/^{$/,/^}$/p' <<<"$1"; }
 
-echo "install: no existing statusLine"
-setup_dir; echo '{"env":{}}' >"$settings"; cp "$settings" "$settings.orig"
+echo "install: syncs and prints the permission rule only"
+setup_dir; echo '{"statusLine":{"type":"command","command":"x"}}' >"$settings"; cp "$settings" "$settings.orig"
 out=$(CLAUDE_SETTINGS="$settings" bash "$IN"); rc=$?
 assert_eq "exit 0" 0 "$rc"
 assert_true "synced usage-status" test -x "$USAGE_AWARE_DIR/usage-status"
-assert_true "synced tap-statusline" test -x "$USAGE_AWARE_DIR/tap-statusline"
+assert_true "synced lib.sh" test -f "$USAGE_AWARE_DIR/lib.sh"
 assert_true "settings file not modified" cmp -s "$settings" "$settings.orig"
-snip=$(sed -n '/^{$/,/^}$/p' <<<"$out")   # the printed JSON snippet
+snip=$(snippet "$out")
 assert_eq "snippet is valid JSON" 0 "$(jq -e . <<<"$snip" >/dev/null; echo $?)"
-assert_eq "plain statusline command" "$USAGE_AWARE_DIR/tap-statusline" "$(jq -r .statusLine.command <<<"$snip")"
+assert_eq "no statusLine in snippet" null "$(jq -r .statusLine <<<"$snip")"
 assert_eq "permission rule" "Bash($USAGE_AWARE_DIR/usage-status *)" "$(jq -r '.permissions.allow[0]' <<<"$snip")"
 
-echo "install: wraps existing statusLine (with quotes)"
-setup_dir
-jq -n '{statusLine:{type:"command",command:"bash ~/my status.sh --fmt '\''%s'\''"}}' >"$settings"
+echo "install: rule already present"
+setup_dir; jq -n --arg r "Bash($USAGE_AWARE_DIR/usage-status *)" '{permissions:{allow:[$r]}}' >"$settings"
 out=$(CLAUDE_SETTINGS="$settings" bash "$IN")
-cmd=$(sed -n '/^{$/,/^}$/p' <<<"$out" | jq -r .statusLine.command)
-assert_contains "uses USAGE_AWARE_NEXT" "USAGE_AWARE_NEXT=" "$cmd"
-# Prove the shell quoting round-trips: eval the prefix and read the var back.
-next=$(bash -c "${cmd% *}"' bash -c '\''printf %s "$USAGE_AWARE_NEXT"'\''')
-assert_eq "old command round-trips" "bash ~/my status.sh --fmt '%s'" "$next"
+assert_contains "says nothing to add" "already" "$out"
+assert_eq "no snippet printed" "" "$(snippet "$out")"
 
-echo "install: already wrapped"
-setup_dir; jq -n '{statusLine:{type:"command",command:"USAGE_AWARE_NEXT='\''x'\'' ~/.claude/usage-aware/tap-statusline"}}' >"$settings"
+echo "install: leftover usage-aware statusLine is flagged"
+setup_dir; jq -n '{statusLine:{type:"command",command:"~/.claude/usage-aware/tap-statusline"}}' >"$settings"
 out=$(CLAUDE_SETTINGS="$settings" bash "$IN")
-assert_contains "detects existing setup" "already" "$out"
+assert_contains "tells user to remove it" "remove" "$out"
 
-echo "install: default dir uses literal ~/ in snippets"
+echo "install: default dir uses literal ~/ in snippet"
 fakehome=$(mktemp -d); echo '{}' >"$settings"
 out=$(env -u USAGE_AWARE_DIR HOME="$fakehome" CLAUDE_SETTINGS="$settings" bash "$IN")
-snip=$(sed -n '/^{$/,/^}$/p' <<<"$out")
-assert_eq "~ statusline path" "~/.claude/usage-aware/tap-statusline" "$(jq -r .statusLine.command <<<"$snip")"
-assert_eq "~ permission rule" "Bash(~/.claude/usage-aware/usage-status *)" "$(jq -r '.permissions.allow[0]' <<<"$snip")"
+assert_eq "~ permission rule" "Bash(~/.claude/usage-aware/usage-status *)" "$(snippet "$out" | jq -r '.permissions.allow[0]')"
 assert_true "synced under HOME" test -x "$fakehome/.claude/usage-aware/usage-status"
 
 echo "install: missing jq"

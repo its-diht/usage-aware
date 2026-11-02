@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# One-time setup: sync scripts to the fixed path and print settings.json snippets.
+# Optional setup: sync scripts to the fixed path and print the permission rule to add.
 # Never edits settings.json itself.
 here="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")"
 source "$here/lib.sh"
@@ -13,28 +13,26 @@ fi
 ua_sync "$(dirname "$here")" || { echo "usage-aware: could not write $UA_DIR" >&2; exit 1; }
 echo "Synced scripts to $UA_DIR"
 
-tap="$UA_DISPLAY_DIR/tap-statusline"
-old=""
-[[ -f "$settings" ]] && old="$(jq -r '.statusLine.command // empty' "$settings" 2>/dev/null)"
+rule="Bash($UA_DISPLAY_DIR/usage-status *)"
+old_sl="" have_rule=""
+if [[ -f "$settings" ]]; then
+  old_sl="$(jq -r '.statusLine.command // empty' "$settings" 2>/dev/null)"
+  have_rule="$(jq -r --arg r "$rule" '(.permissions.allow // []) | index($r) // empty' "$settings" 2>/dev/null)"
+fi
 
-if [[ "$old" == *usage-aware/tap-statusline* ]]; then
+if [[ "$old_sl" == *usage-aware/tap-statusline* ]]; then
   echo
-  echo "Your statusLine already uses usage-aware; no statusLine change needed."
-  cmd=""
-elif [[ -n "$old" ]]; then
-  q="'${old//\'/\'\\\'\'}'"          # single-quote for the shell
-  cmd="USAGE_AWARE_NEXT=$q $tap"
-  echo
-  echo "Found an existing statusLine; the snippet below keeps it via USAGE_AWARE_NEXT."
-else
-  cmd="$tap"
+  echo "Your statusLine still points at usage-aware's old tap-statusline, which no longer exists."
+  echo "Please remove it from $settings (or restore the command saved in USAGE_AWARE_NEXT)."
 fi
 
 echo
-echo "Add this to $settings (merge with what's there):"
-echo
-jq -n --arg cmd "$cmd" --arg rule "Bash($UA_DISPLAY_DIR/usage-status *)" '
-  (if $cmd != "" then {statusLine: {type: "command", command: $cmd}} else {} end)
-  + {permissions: {allow: [$rule]}}'
-echo
-echo "The permission rule lets Claude run usage-status mid-turn without a prompt."
+if [[ -n "$have_rule" ]]; then
+  echo "The permission rule is already in $settings; nothing to add."
+else
+  echo "Add this to $settings (merge with what's there):"
+  echo
+  jq -n --arg rule "$rule" '{permissions: {allow: [$rule]}}'
+  echo
+  echo "It lets Claude run usage-status mid-turn without a permission prompt."
+fi
