@@ -4,12 +4,13 @@ source "$(dirname "$0")/helpers.sh"
 US="$SCRIPTS/usage-status.sh"
 now=$(date +%s)
 
-# state <age_secs> <5h_used|null> <5h_reset_in|-> <7d_used|null> <7d_reset_in>
+# state <age_secs> <5h_used|null> <5h_reset_in> <7d_used|null> <7d_reset_in> [spend_used spend_reset_in]
 state() {
-  local w5=null w7=null
+  local w5=null w7=null sp=null
   [[ $2 != null ]] && w5="{\"used_percentage\":$2,\"resets_at\":$((now+$3))}"
   [[ $4 != null ]] && w7="{\"used_percentage\":$4,\"resets_at\":$((now+$5))}"
-  printf '{"updated_at":%d,"five_hour":%s,"seven_day":%s}\n' "$((now-$1))" "$w5" "$w7" >"$USAGE_AWARE_DIR/state.json"
+  [[ -n ${6:-} ]] && sp="{\"used_percentage\":$6,\"resets_at\":$((now+$7))}"
+  printf '{"updated_at":%d,"five_hour":%s,"seven_day":%s,"spend_limit":%s}\n' "$((now-$1))" "$w5" "$w7" "$sp" >"$USAGE_AWARE_DIR/state.json"
 }
 mode_of() { bash "$US" | sed -n 's/.*mode: \([A-Z-]*\).*/\1/p'; }
 
@@ -30,7 +31,8 @@ echo "usage-status: fresh state, plan example"
 setup_dir; state 40 66 6600 29 356400
 out=$(bash "$US")
 line1=$(head -1 <<<"$out")
-assert_eq "line 1" "[usage] mode: CONSERVE · 5h: 34% left, resets 1h50m · 7d: 71% left, resets 4d3h · 40s old" "$line1"
+# 5h: 66% used over 3h10m elapsed -> 34% lasts 1h37m at that rate, before the 1h50m reset
+assert_eq "line 1" "[usage] mode: CONSERVE · 5h: 34% left, resets 1h50m, pace: out in 1h37m · 7d: 71% left, resets 4d3h · 40s old" "$line1"
 assert_contains "conserve rule" "→ small verifiable steps, no fan-outs/subagents, checkpoint often" "$out"
 assert_not_contains "not stale" "stale" "$out"
 
@@ -74,6 +76,49 @@ state 5 40 3600 0 86400; assert_eq "60% left with 60/25 -> NORMAL" NORMAL "$(mod
 state 5 76 3600 0 86400; assert_eq "24% left with 60/25 -> WRAP-UP" WRAP-UP "$(mode_of)"
 echo 'nonsense' >"$USAGE_AWARE_DIR/config.json"
 state 5 45 3600 0 86400; assert_eq "bad config falls back to defaults" NORMAL "$(mode_of)"
+
+echo "usage-status: pace"
+setup_dir; state 5 0 3600 30 518400          # 7d: 30% used in 1 day, 6 days to go
+assert_eq "7d burning too fast -> CONSERVE" CONSERVE "$(mode_of)"
+assert_contains "reason shown" "mode: CONSERVE (pace: 7d)" "$(bash "$US")"
+assert_contains "runway shown" "pace: out in 2d8h" "$(bash "$US")"
+setup_dir; state 5 0 3600 30 172800          # 30% used in 5 days, 2 to go
+assert_eq "7d on pace -> NORMAL" NORMAL "$(mode_of)"
+assert_not_contains "no pace text when on pace" "pace:" "$(bash "$US")"
+setup_dir; state 5 9 16800 0 86400           # 5h: 9% used in first 20 min (<10% elapsed)
+assert_eq "too early to judge pace -> NORMAL" NORMAL "$(mode_of)"
+setup_dir; state 5 85 3600 30 518400         # pace never loosens a stricter level
+assert_eq "pace does not relax WRAP-UP" WRAP-UP "$(mode_of)"
+
+echo "usage-status: reset soon relaxes one step"
+setup_dir; state 5 88 240 0 86400            # 5h: 12% left, resets in 4 min
+assert_eq "WRAP-UP -> CONSERVE near reset" CONSERVE "$(mode_of)"
+assert_contains "reason shown" "mode: CONSERVE (5h resets soon)" "$(bash "$US")"
+setup_dir; state 5 60 600 0 86400
+assert_eq "CONSERVE -> NORMAL near reset" NORMAL "$(mode_of)"
+setup_dir; state 5 60 960 0 86400
+assert_eq "16 min to reset is outside the 15 min horizon -> CONSERVE" CONSERVE "$(mode_of)"
+setup_dir; state 5 0 3600 85 43200            # 7d resets within 12h
+assert_eq "7d near reset relaxes" CONSERVE "$(mode_of)"
+setup_dir; state 5 88 240 85 518400          # other window still strict
+assert_eq "relaxing one window doesn't hide the other" WRAP-UP "$(mode_of)"
+
+echo "usage-status: spend_limit window"
+setup_dir; state 5 10 3600 10 86400 85 864060
+out=$(bash "$US")
+assert_contains "spend shown" "spend: 15% left, resets 10d0h" "$out"
+assert_eq "spend decides mode" WRAP-UP "$(mode_of)"
+setup_dir; state 5 null 0 null 0 120 864000
+assert_contains "exceeded spend floors at 0" "spend: 0% left" "$(bash "$US")"
+assert_eq "spend-only data has a mode" WRAP-UP "$(mode_of)"
+setup_dir; state 5 10 3600 10 86400
+assert_not_contains "absent spend not shown" "spend" "$(bash "$US")"
+
+echo "usage-status: retries a half-written state file"
+setup_dir; printf '{"updated_at":' >"$USAGE_AWARE_DIR/state.json"
+( sleep 0.03; state 5 10 3600 10 86400 ) &
+out=$(bash "$US"); wait
+assert_contains "read after retry" "mode: NORMAL" "$out"
 
 echo "usage-status: speed"
 setup_dir; state 5 10 3600 10 86400

@@ -6,6 +6,10 @@ UA_CONFIG="$UA_DIR/config.json"
 UA_DEFAULT_CONSERVE=50   # CONSERVE when the tighter window has < this % left
 UA_DEFAULT_WRAPUP=20     # WRAP-UP  when the tighter window has < this % left
 UA_STALE_SECS=1800
+# Pacing (fixed): window lengths, how much of a window must pass before pace is judged,
+# and how close to a reset a window's level is relaxed one step.
+UA_PACE_JSON='{"five_hour":{"len":18000,"soon":900},"seven_day":{"len":604800,"soon":43200}}'
+UA_PACE_MIN_ELAPSED=0.1
 UA_SYNC_FILES=(tap-statusline usage-status lib.sh)
 
 ua_have_jq() { command -v jq >/dev/null 2>&1; }
