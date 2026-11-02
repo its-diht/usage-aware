@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+# Testing step 2: usage-status
+source "$(dirname "$0")/helpers.sh"
+US="$SCRIPTS/usage-status.sh"
+now=$(date +%s)
+
+# state <age_secs> <5h_used|null> <5h_reset_in|-> <7d_used|null> <7d_reset_in>
+state() {
+  local w5=null w7=null
+  [[ $2 != null ]] && w5="{\"used_percentage\":$2,\"resets_at\":$((now+$3))}"
+  [[ $4 != null ]] && w7="{\"used_percentage\":$4,\"resets_at\":$((now+$5))}"
+  printf '{"updated_at":%d,"five_hour":%s,"seven_day":%s}\n' "$((now-$1))" "$w5" "$w7" >"$USAGE_AWARE_DIR/state.json"
+}
+mode_of() { bash "$US" | sed -n 's/.*mode: \([A-Z-]*\).*/\1/p'; }
+
+echo "usage-status: missing state"
+setup_dir
+out=$(bash "$US"); rc=$?
+assert_eq "exit 0" 0 "$rc"
+assert_contains "says unknown" "usage unknown" "$out"
+assert_not_contains "no mode" "mode:" "$out"
+
+echo "usage-status: corrupt state"
+setup_dir; echo 'garbage{' >"$USAGE_AWARE_DIR/state.json"
+out=$(bash "$US"); rc=$?
+assert_eq "exit 0" 0 "$rc"
+assert_contains "corrupt -> unknown" "usage unknown" "$out"
+
+echo "usage-status: fresh state, plan example"
+setup_dir; state 40 66 6600 29 356400
+out=$(bash "$US")
+line1=$(head -1 <<<"$out")
+assert_eq "line 1" "[usage] mode: CONSERVE · 5h: 34% left, resets 1h50m · 7d: 71% left, resets 4d3h · 40s old" "$line1"
+assert_contains "conserve rule" "→ small verifiable steps, no fan-outs/subagents, checkpoint often" "$out"
+assert_not_contains "not stale" "stale" "$out"
+
+echo "usage-status: stale"
+setup_dir; state 1801 10 3600 10 86400
+out=$(bash "$US")
+assert_contains "stale tag" "stale" "$out"
+assert_contains "age shown" "30m old" "$out"
+setup_dir; state 1799 10 3600 10 86400
+assert_not_contains "29m59s not stale" "stale" "$(bash "$US")"
+
+echo "usage-status: reset already passed"
+setup_dir; state 60 95 -10 30 86400
+out=$(bash "$US")
+assert_contains "5h treated as reset" "5h: 100% left (reset)" "$out"
+assert_eq "mode from 7d only" NORMAL "$(mode_of)"
+
+echo "usage-status: missing window"
+setup_dir; state 60 null 0 85 86400
+out=$(bash "$US")
+assert_contains "5h n/a" "5h: n/a" "$out"
+assert_eq "mode from 7d" WRAP-UP "$(mode_of)"
+
+echo "usage-status: mode boundaries (defaults 50/20)"
+for case in "50:NORMAL" "50.5:CONSERVE" "80:CONSERVE" "80.1:WRAP-UP" "100:WRAP-UP" "0:NORMAL"; do
+  used=${case%%:*} want=${case#*:}
+  setup_dir; state 5 "$used" 3600 0 86400
+  assert_eq "5h used $used -> $want" "$want" "$(mode_of)"
+done
+setup_dir; state 5 10 3600 60 86400
+assert_eq "tighter window (7d) decides" CONSERVE "$(mode_of)"
+setup_dir; state 5 85 3600 10 86400
+assert_contains "wrap-up rule" "→ finish the current unit, write a handoff note (done / next / open issues), ask before starting new work" "$(bash "$US")"
+setup_dir; state 5 10 3600 10 86400
+assert_contains "normal rule" "→ work normally, but size plans against remaining usage" "$(bash "$US")"
+
+echo "usage-status: custom config"
+setup_dir; echo '{"conserve":60,"wrapup":25}' >"$USAGE_AWARE_DIR/config.json"
+state 5 45 3600 0 86400; assert_eq "55% left with 60/25 -> CONSERVE" CONSERVE "$(mode_of)"
+state 5 40 3600 0 86400; assert_eq "60% left with 60/25 -> NORMAL" NORMAL "$(mode_of)"
+state 5 76 3600 0 86400; assert_eq "24% left with 60/25 -> WRAP-UP" WRAP-UP "$(mode_of)"
+echo 'nonsense' >"$USAGE_AWARE_DIR/config.json"
+state 5 45 3600 0 86400; assert_eq "bad config falls back to defaults" NORMAL "$(mode_of)"
+
+echo "usage-status: speed"
+setup_dir; state 5 10 3600 10 86400
+t0=$(date +%s%N); bash "$US" >/dev/null; t1=$(date +%s%N)
+ms=$(( (t1-t0)/1000000 ))
+assert_true "under 100ms (${ms}ms)" test "$ms" -lt 100
+
+finish

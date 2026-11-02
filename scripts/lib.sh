@@ -29,12 +29,9 @@ ua_thresholds() {
   fi
 }
 
-# Human duration: 1d2h, 1h50m, 5m, 40s
-ua_fmt_dur() {
-  local s=$1
-  ((s < 0)) && s=0
-  if ((s >= 86400)); then echo "$((s/86400))d$((s%86400/3600))h"
-  elif ((s >= 3600)); then echo "$((s/3600))h$((s%3600/60))m"
-  elif ((s >= 60)); then echo "$((s/60))m"
-  else echo "${s}s"; fi
-}
+# jq helper: human duration (1d2h, 1h50m, 5m, 40s)
+UA_JQ_DUR='def dur: (if . < 0 then 0 else floor end) as $s
+  | if $s >= 86400 then "\($s/86400|floor)d\($s%86400/3600|floor)h"
+    elif $s >= 3600 then "\($s/3600|floor)h\($s%3600/60|floor)m"
+    elif $s >= 60 then "\($s/60|floor)m"
+    else "\($s)s" end;'
