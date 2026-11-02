@@ -30,14 +30,14 @@ render() {
         | (if (.resets_at | type) == "number" then .resets_at - $now else null end) as $ttr
         | level($left) as $lv
         | (if $p != null and $ttr != null and $ttr <= $p.soon then "soon"
-           elif $p != null and $ttr != null and $used > 0 and ($p.len - $ttr) >= $minel * $p.len
+           elif $p != null and $ttr != null and $used > 0 and $left > 0 and ($p.len - $ttr) >= $minel * $p.len
                 and ($left * ($p.len - $ttr) / $used) < $ttr then "pace"
            else null end) as $why
         | (if $why == "pace" then ($left * ($p.len - $ttr) / $used) else null end) as $runway
         | {level: $lv,
            adj: (if $why == "soon" then ([$lv - 1, 0] | max) elif $why == "pace" then ([$lv, 1] | max) else $lv end),
            why: $why,
-           txt: ("\($label): \($left | floor)% left"
+           txt: ("\($label): \($left | floor)% left" + (if $left <= 0 then " (limit reached)" else "" end)
                  + (if $ttr != null then ", resets \($ttr | dur)" else "" end)
                  + (if $runway != null then ", pace: out in \($runway | dur)" else "" end))}
       end

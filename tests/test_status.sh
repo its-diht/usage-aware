@@ -90,6 +90,11 @@ assert_eq "too early to judge pace -> NORMAL" NORMAL "$(mode_of)"
 setup_dir; state 5 85 3600 30 518400         # pace never loosens a stricter level
 assert_eq "pace does not relax WRAP-UP" WRAP-UP "$(mode_of)"
 
+setup_dir; state 5 0 3600 100 144060          # 7d exhausted
+out=$(bash "$US")
+assert_contains "exhausted window says limit reached" "7d: 0% left (limit reached), resets 1d16h" "$out"
+assert_not_contains "no pace text at 0%" "pace:" "$out"
+
 echo "usage-status: reset soon relaxes one step"
 setup_dir; state 5 88 240 0 86400            # 5h: 12% left, resets in 4 min
 assert_eq "WRAP-UP -> CONSERVE near reset" CONSERVE "$(mode_of)"
