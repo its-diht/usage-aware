@@ -59,17 +59,21 @@ const describe = (all: Limits, now: number) =>
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     const r = await next(e)
-    await $.command.register({
-      name: 'usage-color',
-      description: 'Set the usage bar color: /usage-color #ff8800, or /usage-color reset',
-      argumentHint: '<hex> | reset',
-    })
+    await heartbeat($, await runtimeDir($), Math.floor((await $.clock.now()) / 1000))
+    try {
+      await $.command.register({
+        name: 'usage-color',
+        description: 'Set the usage bar color: /usage-color #ff8800, or /usage-color reset',
+        argumentHint: '<hex> | reset',
+      })
+    } catch {
+      // Name taken (e.g. the standalone usage-left mod is still loaded): keep going without it.
+    }
     const saved = await $.store.get('color')
     await update($, color, () => (typeof saved === 'string' ? saved : null))
     // Display only: these figures may predate this session, so they are not persisted.
     const usage = await $.session.usage()
     await update($, limits, () => usage.rateLimits)
-    await heartbeat($, await runtimeDir($), Math.floor((await $.clock.now()) / 1000))
     return r
   })
 

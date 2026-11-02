@@ -4,7 +4,7 @@ import { expect, test } from 'claude-code/testing'
 const NOW = Date.parse('2030-01-01T00:00:00Z')
 const iso = (secs: number) => new Date(NOW + secs * 1000).toISOString()
 
-function engine(on: any, env: Record<string, string | undefined>, usage: any[] = []) {
+function engine(on: any, env: Record<string, string | undefined>, usage: any[] = [], refuseCommands = false) {
   const files: Record<string, string> = {}
   on('env.get', (_: any, e: { name: string }) => ({ value: env[e.name] }))
   on('clock.now', () => ({ value: NOW }))
@@ -12,7 +12,10 @@ function engine(on: any, env: Record<string, string | undefined>, usage: any[] =
   on('store.get', () => ({ value: undefined }))
   on('store.set', () => ({ value: undefined }))
   on('store.delete', () => ({ value: undefined }))
-  on('command.register', (_: any, e: { name: string }) => ({ value: { command: e.name } }))
+  on('command.register', (_: any, e: { name: string }) => {
+    if (refuseCommands) throw new Error(`"/${e.name}" refused: the plugin usage-left registered it already`)
+    return { value: { command: e.name } }
+  })
   on('session.usage', () => ({ value: { startedAt: NOW, context: {}, rateLimits: usage } }))
   on('session.start', (_: any, e: { cwd: string }) => ({ cwd: e.cwd }))
   on('session.measure', (_: any, e: { changed: string[] }) => ({ changed: e.changed }))
@@ -86,4 +89,13 @@ test('/usage-color sets and resets the bar color', async ($, on) => {
   expect((await $.command.run({ command: 'usage-color', args: '#ff8800' } as any)).text).toContain('#ff8800')
   expect((await $.command.run({ command: 'usage-color', args: 'nope' } as any)).text).toContain('Not a hex color')
   expect((await $.command.run({ command: 'usage-color', args: 'reset' } as any)).text).toContain('reset')
+})
+
+test('a refused /usage-color (name taken) does not stop the rest of session.start', async ($, on) => {
+  const files = engine(on, { USAGE_AWARE_DIR: '/ua' }, [{ kind: 'five_hour', percentUsed: 40, resetsAt: iso(600) }], true)
+  await start($)
+  expect(files['/ua/mod.json']).toBeDefined()
+  const ui = await $.ui.mount({ plugin: 'usage-aware', surface: 'terminal', component: 'AbovePrompt', props: {} as any })
+  expect((await ui.find({ type: 'Text', text: /5h/ }))?.text).toContain('60% left')
+  await ui.unmount()
 })
