@@ -13,4 +13,8 @@ assert_contains "command calls set-thresholds" 'scripts/set-thresholds.sh" $ARGU
 for f in "$ROOT"/scripts/*.sh; do
   assert_true "syntax ok: $(basename "$f")" bash -n "$f"
 done
+assert_eq "hooks.json names the mod module" "./register.tsx" "$(jq -r '.modules[0]' "$ROOT/hooks/hooks.json")"
+assert_true "mod module exists" test -f "$ROOT/hooks/register.tsx"
+assert_eq "plugin.json types contract" "./types/index.d.ts" "$(jq -r .types "$ROOT/.claude-plugin/plugin.json")"
+assert_eq "versions match" "$(jq -r .version "$ROOT/.claude-plugin/plugin.json")" "$(jq -r '.plugins[0].version' "$ROOT/.claude-plugin/marketplace.json")"
 finish

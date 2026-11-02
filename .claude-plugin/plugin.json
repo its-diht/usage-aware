@@ -1,9 +1,17 @@
 {
   "name": "usage-aware",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Keeps Claude aware of your remaining 5-hour and 7-day plan usage and budgets work against it.",
-  "author": { "name": "its-diht" },
+  "author": {
+    "name": "its-diht"
+  },
   "repository": "https://github.com/its-diht/usage-aware",
   "license": "MIT",
-  "keywords": ["usage", "rate-limits", "statusline", "budget"]
+  "keywords": [
+    "usage",
+    "rate-limits",
+    "statusline",
+    "budget"
+  ],
+  "types": "./types/index.d.ts"
 }
