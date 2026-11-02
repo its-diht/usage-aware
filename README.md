@@ -58,7 +58,7 @@ Claude Code ──stdin JSON──▶ tap-statusline ──writes──▶ ~/.cl
                  (push, every prompt)           (pull, mid-turn)
 ```
 
-`rate_limits` is only handed to statusline commands, so the statusline saves it. Claude then sees usage in three layers:
+Hooks, the Bash tool and the CLI never see `rate_limits`; statusline commands do, so the statusline saves it. Claude then sees usage in three layers:
 
 1. **Session start** (also after `/clear`, `/compact`, resume): the budgeting policy and modes table.
 2. **Every prompt:** the current usage line and that mode's rule.
