@@ -153,7 +153,7 @@ test('less than a whole point moved: no sample yet', async ($, on) => {
   const files = engine(on, { USAGE_AWARE_DIR: '/ua' }, [], false, store)
   await measure($, lims(10, 2), 0)
   await turn($, 100000)
-  await measure($, lims(10.9, 2.5), 0.5)
+  await measure($, lims(10.9, 2.5), 0.3)
   expect(state(files).five_hour.tokens_per_pct).toBe(undefined)
   expect((store.cal as any).usdPerPct).toEqual({})
   await measure($, lims(11, 2.5), 0.6) // now 1.0 point since the anchor

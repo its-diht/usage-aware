@@ -32,7 +32,7 @@ const toWindow = (all: Limits, kind: string, cal?: Cal): Window => {
 type Cal = { usdPerPct: Record<string, { v: number; n: number }>; tokPerUsd: number | null }
 const CAL_KINDS = ['five_hour', 'seven_day']
 const MIN_DP = 1 // % points per sample; percentUsed has one decimal, so ~10% sample error
-const MIN_USD = 0.05 // session spend before tokens/$ is trusted
+const MIN_USD = 0.25 // session spend before its tokens/$ replaces the saved one
 const ALPHA = 0.3 // weight of a new sample
 const BAND = 3 // after 3 samples, a sample is clamped to [v/BAND, v*BAND]
 
