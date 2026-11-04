@@ -18,7 +18,10 @@ function engine(
   on('store.get', (_: any, e: { key: string }) => ({ value: store[e.key] }))
   on('store.set', (_: any, e: { key: string; value: unknown }) => ((store[e.key] = e.value), { value: undefined }))
   on('store.delete', (_: any, e: { key: string }) => (delete store[e.key], { value: undefined }))
-  on('turn.complete', (_: any, e: any) => ({ text: e.answer, usage: e.usage }))
+  // The model's response beneath turn.step; the test passes its usage in via the model field.
+  on('turn.step', async function* (_: any, e: any) {
+    return { turnId: e.turnId, index: e.index, answer: '', toolUses: [], stopReason: 'end_turn', usage: JSON.parse(e.model) }
+  })
   on('command.register', (_: any, e: { name: string }) => {
     if (refuseCommands) throw new Error(`"/${e.name}" refused: the plugin usage-left registered it already`)
     return { value: { command: e.name } }
@@ -36,16 +39,14 @@ const measure = ($: any, rateLimits: any[], usd?: number, contextTokens?: number
     cost: usd === undefined ? undefined : { usd },
     changed: ['rateLimits'],
   })
-const turn = ($: any, total: number, agentId?: string) =>
-  $.turn.complete({
-    turnId: 't',
-    agentId,
-    answer: '',
-    durationMs: 1,
-    isAborted: false,
-    reason: 'answer',
-    usage: { model: 'm', input_tokens: total / 2, output_tokens: total / 4, cache_read_input_tokens: total / 4, cache_creation_input_tokens: 0 },
-  })
+// One model response of `total` tokens; the bottom mock answers with this usage.
+const turn = async ($: any, total: number, agentId?: string) => {
+  const usage = { model: 'm', input_tokens: total / 2, output_tokens: total / 4, cache_read_input_tokens: total / 4, cache_creation_input_tokens: 0 }
+  const stream = $.turn.step({ turnId: 't', index: 0, model: JSON.stringify(usage), messageCount: 1, agentId })
+  for await (const _ of stream) {
+  }
+  return stream.result
+}
 const lims = (h: number, d: number) => [
   { kind: 'five_hour', percentUsed: h, resetsAt: iso(6600) },
   { kind: 'seven_day', percentUsed: d, resetsAt: iso(356400) },

@@ -114,7 +114,7 @@ const describe = (all: Limits, now: number, est: PerPct = {}) =>
 type Session = {
   cal: Cal | null
   anchors: Record<string, Anchor>
-  tokens: number // this process's tokens, from every turn (main and subagents)
+  tokens: number // this process's tokens, from every model response (main and subagents)
   ratioBase: { tok: number; usd: number } | null
 }
 
@@ -137,10 +137,12 @@ async function publishEst($: EngineInterface, c: Cal) {
 export const register: Register = on => {
   const st: Session = { cal: null, anchors: {}, tokens: 0, ratioBase: null }
 
-  on('turn.complete', async ($, e, next) => {
-    const r = await next(e)
+  // Count every model response as it lands (main loop and subagents), so a
+  // turn's tokens are in before the measurement that follows it.
+  on('turn.step', async function* ($, e, next) {
+    const r = yield* next(e)
     try {
-      st.tokens += sumUsage(r?.usage ?? (e as any).usage)
+      st.tokens += sumUsage(r?.usage)
     } catch {}
     return r
   })
