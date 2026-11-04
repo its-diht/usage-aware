@@ -1,6 +1,6 @@
 {
   "name": "usage-aware",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Keeps Claude aware of your remaining 5-hour and 7-day plan usage and budgets work against it.",
   "author": {
     "name": "its-diht"
