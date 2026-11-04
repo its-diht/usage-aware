@@ -15,6 +15,16 @@ function engine(
   on('env.get', (_: any, e: { name: string }) => ({ value: env[e.name] }))
   on('clock.now', () => ({ value: NOW }))
   on('fs.write', (_: any, e: { path: string; text: string }) => ((files[e.path] = e.text), { value: undefined }))
+  on('fs.read', (_: any, e: { path: string }) => {
+    if (!(e.path in files)) throw new Error(`ENOENT: ${e.path}`)
+    return { value: files[e.path] }
+  })
+  on('fs.list', (_: any, e: { path: string }) => ({
+    value: Object.keys(files)
+      .filter(f => f.startsWith(e.path + '/') && !f.slice(e.path.length + 1).includes('/'))
+      .map(f => ({ name: f.slice(e.path.length + 1), kind: 'file', size: files[f].length })),
+  }))
+  on('session.id', () => ({ value: 'sess-A' }))
   on('store.get', (_: any, e: { key: string }) => ({ value: store[e.key] }))
   on('store.set', (_: any, e: { key: string; value: unknown }) => ((store[e.key] = e.value), { value: undefined }))
   on('store.delete', (_: any, e: { key: string }) => (delete store[e.key], { value: undefined }))
@@ -192,4 +202,28 @@ test('no cost figure: no estimate, state still written', async ($, on) => {
   await measure($, lims(20, 4))
   expect(state(files).five_hour).toEqual({ used_percentage: 20, resets_at: NOW / 1000 + 6600 })
   expect(state(files).session_usd).toBe(undefined)
+})
+
+test('cost is pooled across sessions on this machine', async ($, on) => {
+  const store: Record<string, unknown> = {}
+  const files = engine(on, { USAGE_AWARE_DIR: '/ua' }, [], false, store)
+  const other = (usd: number, at = NOW / 1000) => (files['/ua/sessions/sess-B.json'] = JSON.stringify({ usd, at }))
+  other(5)
+  files['/ua/sessions/old.json'] = JSON.stringify({ usd: 100, at: NOW / 1000 - 8 * 86400 }) // over a week: ignored
+  files['/ua/sessions/garbage.json'] = '{half'
+  await measure($, lims(10, 2), 0)
+  expect(JSON.parse(files['/ua/sessions/sess-A.json'])).toEqual({ usd: 0, at: NOW / 1000 })
+  other(6.5) // the other session spent $1.50 meanwhile
+  await turn($, 100000)
+  await measure($, lims(14, 2), 0.5) // 4 points for $2.00 across both sessions
+  expect((store.cal as any).usdPerPct.five_hour).toEqual({ v: 0.5, n: 1 })
+})
+
+test('calibration written by another session is picked up', async ($, on) => {
+  const store: Record<string, unknown> = {}
+  const files = engine(on, { USAGE_AWARE_DIR: '/ua' }, [], false, store)
+  await measure($, lims(10, 2), 0)
+  store.cal = { usdPerPct: { five_hour: { v: 2, n: 4 } }, tokPerUsd: 1000 }
+  await measure($, lims(10.5, 2), 0.1)
+  expect(state(files).five_hour.tokens_per_pct).toBe(2000)
 })

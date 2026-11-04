@@ -80,13 +80,13 @@ A window whose reset time has passed counts as 100% left. Data older than 30 min
 
 The same % is a very different amount of work on Pro, Max and Ultra, so the plugin estimates **tokens left** in each window and shows it in parentheses: `34% left (~4.1M tok)`. Claude Code doesn't report a token allowance, so the mod learns one:
 
-- It samples the session's cost (price-weighted, subagents included) each time a window moves at least 1 point: dollars per 1% of the window.
+- It samples the cost of every Claude Code session on this machine (price-weighted, subagents included) each time a window moves at least 1 point: dollars per 1% of the window.
 - It counts the tokens of every turn, including subagent turns, to get tokens per dollar.
 - Tokens left = % left × dollars per 1% × tokens per dollar.
 
 Samples are smoothed (EMA), outliers are clamped after a few samples, a window reset re-anchors instead of sampling, and the calibration is saved across sessions in the mod's store. `≈N steps at Xk context` divides the tighter window's tokens by the current context size, since each model call costs about one context. Claude is told to size work in tokens/steps and to treat the % and mode as the coarse gate.
 
-Caveats: no estimate appears until the first whole point of movement. Other sessions on the same account move the % without this session's cost, so the estimate can run low, which errs on the safe side. Modes are still set by %.
+Caveats: no estimate appears until the first whole point of movement. Each session writes its running cost to `~/.claude/usage-aware/sessions/`, and calibration sums all of them, so parallel Claude Code sessions on this machine are accounted for. Use elsewhere (claude.ai, other devices) moves the % with no cost seen, so the estimate can run low, which errs on the safe side; after 3 samples such outliers are clamped. Modes are still set by %.
 
 ## Uninstall
 

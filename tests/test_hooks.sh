@@ -66,6 +66,14 @@ assert_eq "identical file not rewritten" "$m1" "$(stat -c %Y.%i "$USAGE_AWARE_DI
 echo '# plugin update' >>"$plugin/scripts/usage-status.sh"
 echo '{}' | bash "$IP" >/dev/null
 assert_true "changed file re-synced" cmp -s "$plugin/scripts/usage-status.sh" "$USAGE_AWARE_DIR/usage-status"
+
+echo "inject-policy: prunes week-old session cost files"
+mkdir -p "$USAGE_AWARE_DIR/sessions"
+echo '{}' >"$USAGE_AWARE_DIR/sessions/old.json"; touch -d '8 days ago' "$USAGE_AWARE_DIR/sessions/old.json"
+echo '{}' >"$USAGE_AWARE_DIR/sessions/new.json"
+echo '{}' | bash "$IP" >/dev/null
+assert_true "old file pruned" test ! -e "$USAGE_AWARE_DIR/sessions/old.json"
+assert_true "recent file kept" test -f "$USAGE_AWARE_DIR/sessions/new.json"
 unset CLAUDE_PLUGIN_ROOT
 
 echo "step 4: missing jq"

@@ -116,13 +116,51 @@ type Session = {
   anchors: Record<string, Anchor>
   tokens: number // this process's tokens, from every model response (main and subagents)
   ratioBase: { tok: number; usd: number } | null
+  id: string | null
 }
 
+// Read fresh each time: other sessions update the same calibration.
 async function loadCal($: EngineInterface, st: Session): Promise<Cal> {
-  if (st.cal) return st.cal
   const saved = (await $.store.get('cal')) as Cal | undefined
   st.cal = saved && typeof saved === 'object' && saved.usdPerPct ? saved : { usdPerPct: {}, tokPerUsd: null }
   return st.cal
+}
+
+// Cost of every session on this machine, so the % that other sessions move is
+// matched by their cost too. Each session writes sessions/<id>.json and sums all
+// files written within the last week; on any failure, just this session's cost.
+const POOL_MAX_AGE = 7 * 86400
+
+async function pooledUsd($: EngineInterface, dir: string, id: string, usd: number, nowSecs: number) {
+  try {
+    await $.fs.write(`${dir}/sessions/${id}.json`, JSON.stringify({ usd, at: nowSecs }) + '\n')
+    let total = 0
+    for (const f of await $.fs.list(`${dir}/sessions`)) {
+      if (f.kind !== 'file' || !f.name.endsWith('.json')) continue
+      if (f.name === `${id}.json`) {
+        total += usd
+        continue
+      }
+      try {
+        const o = JSON.parse(String(await $.fs.read(`${dir}/sessions/${f.name}`)))
+        if (typeof o.usd === 'number' && typeof o.at === 'number' && nowSecs - o.at <= POOL_MAX_AGE) total += o.usd
+      } catch {} // mid-write or foreign file: skip it this time
+    }
+    return total
+  } catch {
+    return usd
+  }
+}
+
+async function sessionKey($: EngineInterface, st: Session) {
+  if (!st.id) {
+    let id = ''
+    try {
+      id = await $.session.id()
+    } catch {}
+    st.id = (id || Math.random().toString(36).slice(2)).replace(/[^A-Za-z0-9_-]/g, '_')
+  }
+  return st.id
 }
 
 async function publishEst($: EngineInterface, c: Cal) {
@@ -135,7 +173,7 @@ async function publishEst($: EngineInterface, c: Cal) {
 }
 
 export const register: Register = on => {
-  const st: Session = { cal: null, anchors: {}, tokens: 0, ratioBase: null }
+  const st: Session = { cal: null, anchors: {}, tokens: 0, ratioBase: null, id: null }
 
   // Count every model response as it lands (main loop and subagents), so a
   // turn's tokens are in before the measurement that follows it.
@@ -176,9 +214,10 @@ export const register: Register = on => {
     const usd = e.cost?.usd
     if (typeof usd === 'number') {
       let changed = false
+      const pooled = await pooledUsd($, dir, await sessionKey($, st), usd, now)
       for (const kind of CAL_KINDS) {
         const l = e.rateLimits.find(x => x.kind === kind)
-        if (l && calibrate(c, st.anchors, kind, l, usd)) changed = true
+        if (l && calibrate(c, st.anchors, kind, l, pooled)) changed = true
       }
       if (!st.ratioBase || usd < st.ratioBase.usd) st.ratioBase = { tok: st.tokens, usd }
       const du = usd - st.ratioBase.usd
