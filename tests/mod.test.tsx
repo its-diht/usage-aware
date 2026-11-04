@@ -67,6 +67,7 @@ test('session.measure writes state.json in the schema usage-status reads', async
     five_hour: { used_percentage: 66, resets_at: NOW / 1000 + 6600 },
     seven_day: { used_percentage: 29.5, resets_at: NOW / 1000 + 356400 },
     spend_limit: { used_percentage: 12, resets_at: null },
+    session_tokens: 0,
   })
   expect(JSON.parse(files['/ua/mod.json'])).toEqual({ heartbeat: NOW / 1000 })
 })
@@ -142,6 +143,7 @@ test('learns tokens per 1% from cost per point moved and tokens per dollar', asy
   expect(s.five_hour).toEqual({ used_percentage: 12, resets_at: NOW / 1000 + 6600, tokens_per_pct: 500000, samples: 1 })
   expect(s.seven_day.tokens_per_pct).toBe(1000000)
   expect(s.context_tokens).toBe(85000)
+  expect([s.session_tokens, s.session_usd]).toEqual([1000000, 1.0])
   expect((store.cal as any).tokPerUsd).toBe(1000000)
   const ui = await $.ui.mount({ plugin: 'usage-aware', surface: 'terminal', component: 'AbovePrompt', props: {} as any })
   expect((await ui.find({ type: 'Text', text: /5h/ }))?.text).toContain('88% left (~44M)')
@@ -188,4 +190,5 @@ test('no cost figure: no estimate, state still written', async ($, on) => {
   await turn($, 100000)
   await measure($, lims(20, 4))
   expect(state(files).five_hour).toEqual({ used_percentage: 20, resets_at: NOW / 1000 + 6600 })
+  expect(state(files).session_usd).toBe(undefined)
 })

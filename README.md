@@ -3,7 +3,7 @@
 Keeps Claude Code aware of your remaining **5-hour** and **7-day** plan usage, and makes it budget work against what's left.
 
 ```
-[usage] mode: CONSERVE · 5h: 34% left (~4.1M tok), resets 1h50m · 7d: 71% left (~106M tok), resets 4d3h · ≈48 steps at 85k context · 40s old
+[usage] mode: CONSERVE · 5h: 34% left (~4.1M tok), resets 1h50m · 7d: 71% left (~107M tok), resets 4d3h · ≈48 steps at 85k context · 40s old
         → small verifiable steps, no fan-outs/subagents, checkpoint often
 ```
 

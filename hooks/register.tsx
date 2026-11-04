@@ -199,6 +199,9 @@ export const register: Register = on => {
         spend_limit: toWindow(e.rateLimits, 'spend_limit'),
       }
       if (typeof e.context?.tokens === 'number') state.context_tokens = e.context.tokens
+      // Diagnostics: this process's counted tokens and the session's cost.
+      state.session_tokens = st.tokens
+      if (typeof usd === 'number') state.session_usd = usd
       await $.fs.write(`${dir}/state.json`, JSON.stringify(state) + '\n')
     }
     await heartbeat($, dir, now)
