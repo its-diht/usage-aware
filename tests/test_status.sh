@@ -29,7 +29,7 @@ assert_contains "corrupt -> unknown" "usage unknown" "$out"
 
 echo "usage-status: fresh state, plan example"
 setup_dir; state 40 66 6600 29 356400
-out=$(bash "$US")
+out=$(UA_NOW=$now bash "$US")   # pinned clock: exact-line check
 line1=$(head -1 <<<"$out")
 # 5h: 66% used over 3h10m elapsed -> 34% lasts 1h37m at that rate, before the 1h50m reset
 assert_eq "line 1" "[usage] mode: CONSERVE · 5h: 34% left, resets 1h50m, pace: out in 1h37m · 7d: 71% left, resets 4d3h · 40s old" "$line1"
@@ -135,8 +135,8 @@ assert_true "under 100ms (${ms}ms)" test "$ms" -lt 100
 echo "usage-status: token estimate"
 setup_dir; now=$(date +%s)
 printf '{"updated_at":%d,"five_hour":{"used_percentage":66,"resets_at":%d,"tokens_per_pct":120000},"seven_day":{"used_percentage":20,"resets_at":%d,"tokens_per_pct":1500000},"context_tokens":85000}\n' \
-  "$((now-40))" "$((now+6630))" "$((now+300060))" >"$USAGE_AWARE_DIR/state.json"
-line1=$(bash "$US" | head -1)
+  "$((now-40))" "$((now+6600))" "$((now+300060))" >"$USAGE_AWARE_DIR/state.json"
+line1=$(UA_NOW=$now bash "$US" | head -1)
 assert_eq "tokens beside %, steps from tighter window" \
   "[usage] mode: CONSERVE · 5h: 34% left (~4.1M tok), resets 1h50m, pace: out in 1h37m · 7d: 80% left (~120M tok), resets 3d11h · ≈48 steps at 85k context · 40s old" "$line1"
 

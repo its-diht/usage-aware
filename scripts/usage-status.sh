@@ -9,7 +9,7 @@ ua_have_jq || unknown "jq not found"
 read -r conserve wrapup < <(ua_thresholds)
 
 render() {
-  jq -r --argjson now "$(date +%s)" --argjson c "$conserve" --argjson w "$wrapup" \
+  jq -r --argjson now "${UA_NOW:-$(date +%s)}" --argjson c "$conserve" --argjson w "$wrapup" \
         --argjson stale "$UA_STALE_SECS" --argjson pace "$UA_PACE_JSON" \
         --argjson minel "$UA_PACE_MIN_ELAPSED" "$UA_JQ_DUR"'
   def names: ["NORMAL", "CONSERVE", "WRAP-UP"];
