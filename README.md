@@ -3,7 +3,7 @@
 Keeps Claude Code aware of your remaining **5-hour** and **7-day** plan usage, and makes it budget work against what's left.
 
 ```
-[usage] mode: CONSERVE · 5h: 34% left, resets 1h50m · 7d: 71% left, resets 4d3h · 40s old
+[usage] mode: CONSERVE · 5h: 34% left (~4.1M tok), resets 1h50m · 7d: 71% left (~106M tok), resets 4d3h · ≈48 steps at 85k context · 40s old
         → small verifiable steps, no fan-outs/subagents, checkpoint often
 ```
 
@@ -75,6 +75,18 @@ Two adjustments, shown after the mode:
 - **Resets soon:** a window resetting within 15 min (5h) or 12 h (7d) counts one step less strict: `mode: CONSERVE (5h resets soon)`.
 
 A window whose reset time has passed counts as 100% left. Data older than 30 minutes is tagged `stale`.
+
+### Token estimate
+
+The same % is a very different amount of work on Pro, Max and Ultra, so the plugin estimates **tokens left** in each window and shows it in parentheses: `34% left (~4.1M tok)`. Claude Code doesn't report a token allowance, so the mod learns one:
+
+- It samples the session's cost (price-weighted, subagents included) each time a window moves at least 1 point: dollars per 1% of the window.
+- It counts the tokens of every turn, including subagent turns, to get tokens per dollar.
+- Tokens left = % left × dollars per 1% × tokens per dollar.
+
+Samples are smoothed (EMA), outliers are clamped after a few samples, a window reset re-anchors instead of sampling, and the calibration is saved across sessions in the mod's store. `≈N steps at Xk context` divides the tighter window's tokens by the current context size, since each model call costs about one context. Claude is told to size work in tokens/steps and to treat the % and mode as the coarse gate.
+
+Caveats: no estimate appears until the first whole point of movement. Other sessions on the same account move the % without this session's cost, so the estimate can run low, which errs on the safe side. Modes are still set by %.
 
 ## Uninstall
 

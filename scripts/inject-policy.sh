@@ -29,8 +29,10 @@ Two adjustments, shown in parentheses after the mode:
 - **(… resets soon):** a window resetting within 15 min (5h) or 12 h (7d) counts one step less strict, since it's about to refill.
 A \`spend\` window (spend-limit accounts) counts like the others.
 
+Token estimate (your main sizing unit): each window may show "(~N tok)", an estimate of the tokens left in it, learned from how far the % moves per dollar of usage, then converted at the tokens per dollar seen so far. It's plan-independent: 10% on one plan can be far more work than 10% on another, so size work by tokens, and use the % and mode as the coarse gate. "≈N steps at Xk context" divides the tighter window's tokens by your current context size. Each model call (a step: one tool use and its reply) costs about one full context, so this shrinks as context grows and grows after /compact. A subagent costs its own context per step, plus its result added to yours. It's an estimate: it can run low when other sessions share the account, and it's missing until calibrated (the first point or so of movement). With no estimate, size by % alone.
+
 Rules:
-- Account for usage in every plan. Before multi-step work, estimate its size against what's left.
+- Account for usage in every plan. Before multi-step work, estimate its size in steps/tokens against the tokens left in the tighter window (the % if there's no estimate), and leave headroom.
 - Say so when you defer or split work because of usage.
 - Weigh the 7d window as pacing across days, not just the 5h window.
 - During long autonomous work, run \`$cmd\` (exactly that command, with the literal path) before each major step and before spawning subagents. If the mode got stricter, adjust the plan.

@@ -131,4 +131,27 @@ t0=$(date +%s%N); bash "$US" >/dev/null; t1=$(date +%s%N)
 ms=$(( (t1-t0)/1000000 ))
 assert_true "under 100ms (${ms}ms)" test "$ms" -lt 100
 
+
+echo "usage-status: token estimate"
+setup_dir; now=$(date +%s)
+printf '{"updated_at":%d,"five_hour":{"used_percentage":66,"resets_at":%d,"tokens_per_pct":120000},"seven_day":{"used_percentage":20,"resets_at":%d,"tokens_per_pct":1500000},"context_tokens":85000}\n' \
+  "$((now-40))" "$((now+6630))" "$((now+300060))" >"$USAGE_AWARE_DIR/state.json"
+line1=$(bash "$US" | head -1)
+assert_eq "tokens beside %, steps from tighter window" \
+  "[usage] mode: CONSERVE · 5h: 34% left (~4.1M tok), resets 1h50m, pace: out in 1h37m · 7d: 80% left (~120M tok), resets 3d11h · ≈48 steps at 85k context · 40s old" "$line1"
+
+setup_dir
+printf '{"updated_at":%d,"five_hour":{"used_percentage":95,"resets_at":%d,"tokens_per_pct":20000},"seven_day":{"used_percentage":10,"resets_at":%d},"context_tokens":40000}\n' \
+  "$now" "$((now+16000))" "$((now+300060))" >"$USAGE_AWARE_DIR/state.json"
+line1=$(bash "$US" | head -1)
+assert_contains "k formatting" "5h: 5% left (~100k tok)" "$line1"
+assert_contains "window without estimate stays plain" "7d: 90% left, resets" "$line1"
+assert_contains "steps use the window that has an estimate" "≈2 steps at 40k context" "$line1"
+
+setup_dir
+printf '{"updated_at":%d,"five_hour":{"used_percentage":50,"resets_at":%d,"tokens_per_pct":900}}\n' "$now" "$((now-5))" >"$USAGE_AWARE_DIR/state.json"
+line1=$(bash "$US" | head -1)
+assert_contains "reset window: full estimate" "5h: 100% left (~90k tok) (reset)" "$line1"
+assert_not_contains "no context: no steps" "steps" "$line1"
+
 finish

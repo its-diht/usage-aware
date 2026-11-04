@@ -17,18 +17,24 @@ render() {
               "small verifiable steps, no fan-outs/subagents, checkpoint often",
               "finish the current unit, write a handoff note (done / next / open issues), ask before starting new work"];
   def level($left): if $left >= $c then 0 elif $left >= $w then 1 else 2 end;
+  def ftok: if . >= 1e7 then "\(. / 1e6 | round)M" elif . >= 1e6 then "\((. / 1e5 | round) / 10)M"
+            elif . >= 1e3 then "\(. / 1e3 | round)k" else "\(round)" end;
+  # Estimated tokens left in a window, from the mod'"'"'s learned tokens per 1%.
+  def toks($left): if (.tokens_per_pct | type) == "number" and .tokens_per_pct > 0 then $left * .tokens_per_pct else null end;
+  def tokstr($t): if $t == null then "" else " (~\($t | ftok) tok)" end;
 
   # One window -> {txt, level (raw), adj (after pace/relax), why}
   def win($key; $label):
     ($pace[$key]) as $p
     | if type != "object" or (.used_percentage | type) != "number" then {txt: "\($label): n/a"}
       elif (.resets_at | type) == "number" and .resets_at <= $now then
-        {txt: "\($label): 100% left (reset)", level: 0, adj: 0}
+        toks(100) as $t | {txt: "\($label): 100% left\(tokstr($t)) (reset)", level: 0, adj: 0, tok: $t}
       else
         (.used_percentage) as $used
         | ([100 - $used, 0] | max) as $left
         | (if (.resets_at | type) == "number" then .resets_at - $now else null end) as $ttr
         | level($left) as $lv
+        | toks($left) as $t
         | (if $p != null and $ttr != null and $ttr <= $p.soon then "soon"
            elif $p != null and $ttr != null and $used > 0 and $left > 0 and ($p.len - $ttr) >= $minel * $p.len
                 and ($left * ($p.len - $ttr) / $used) < $ttr then "pace"
@@ -36,8 +42,8 @@ render() {
         | (if $why == "pace" then ($left * ($p.len - $ttr) / $used) else null end) as $runway
         | {level: $lv,
            adj: (if $why == "soon" then ([$lv - 1, 0] | max) elif $why == "pace" then ([$lv, 1] | max) else $lv end),
-           why: $why,
-           txt: ("\($label): \($left | floor)% left" + (if $left <= 0 then " (limit reached)" else "" end)
+           why: $why, tok: $t,
+           txt: ("\($label): \($left | floor)% left" + tokstr($t) + (if $left <= 0 then " (limit reached)" else "" end)
                  + (if $ttr != null then ", resets \($ttr | dur)" else "" end)
                  + (if $runway != null then ", pace: out in \($runway | dur)" else "" end))}
       end
@@ -54,7 +60,11 @@ render() {
       | (if $m > $raw then " (pace: \($known | map(select(.why == "pace" and .adj == $m) | .label) | join(", ")))"
          elif $m < $raw then " (\($known | map(select(.why == "soon" and .level == $raw) | .label) | join(", ")) resets soon)"
          else "" end) as $reason
-      | "[usage] mode: \(names[$m])\($reason) · \($ws | map(.txt) | join(" · ")) · \($now - $state.updated_at | dur) old"
+      | ($known | map(.tok | select(. != null)) | min) as $mintok
+      | ($state.context_tokens) as $ctx
+      | (if $mintok != null and ($ctx | type) == "number" and $ctx > 0
+         then " · ≈\($mintok / $ctx | floor) steps at \($ctx | ftok) context" else "" end) as $steps
+      | "[usage] mode: \(names[$m])\($reason) · \($ws | map(.txt) | join(" · "))\($steps) · \($now - $state.updated_at | dur) old"
         + (if ($now - $state.updated_at) > $stale then " · stale" else "" end)
         + "\n        → \(rules[$m])"
     end
