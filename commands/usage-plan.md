@@ -1,7 +1,7 @@
 ---
 description: Set this session's usage plan from a prompt (or show / clear it)
 argument-hint: <what you want> | show | clear | add <more>
-allowed-tools: Bash(~/.claude/usage-aware/usage-plan *), Write(~/.claude/usage-aware/plans/*.draft.json), Edit(~/.claude/usage-aware/plans/*.draft.json)
+allowed-tools: Bash(~/.claude/usage-aware/usage-plan *)
 ---
 <usage-plan-context>
 !`~/.claude/usage-aware/usage-plan context ${CLAUDE_SESSION_ID}`
@@ -21,14 +21,14 @@ Do one of these, depending on the request:
 
 ## Writing the plan
 
-Save it in two steps:
-1. Use the Write tool to write the JSON to `~/.claude/usage-aware/plans/${CLAUDE_SESSION_ID}.draft.json`:
-   `{"source": "<the user's request, verbatim>", "rules": [ ... ]}`
-2. Run `~/.claude/usage-aware/usage-plan set ${CLAUDE_SESSION_ID}`. It validates the draft, saves it as the plan, and deletes the draft. Don't pass JSON through the shell.
+Build it with one shell command per step. Don't write JSON or files yourself; the script does that:
+1. `~/.claude/usage-aware/usage-plan begin ${CLAUDE_SESSION_ID} "<the user's request, verbatim>"` starts a draft. For an `add` request, use `begin ${CLAUDE_SESSION_ID} --add "<request>"` to keep the current rules.
+2. For each rule, run `~/.claude/usage-aware/usage-plan rule ${CLAUDE_SESSION_ID} <id> "<when>" "<do>" [--subagent] [--once]`. Use one command per rule and double-quote `when` and `do`. Reusing an id replaces that rule.
+3. Run `~/.claude/usage-aware/usage-plan commit ${CLAUDE_SESSION_ID}`. It validates the draft and saves it as the plan.
 
-Each rule is `{"id": "short-kebab-name", "when": "<condition>", "do": "<instruction to yourself>"}`, with two optional fields:
-- `"on": "subagent"`: deliver the rule only right before you dispatch a subagent, instead of with every prompt.
-- `"once": true`: deliver the rule only when its condition first becomes true. It re-arms if the condition turns false again.
+`id` is a short kebab-case name. `when` is the condition and `do` is the one-line instruction to yourself. Two optional flags:
+- `--subagent`: deliver the rule only right before you dispatch a subagent, instead of with every prompt.
+- `--once`: deliver the rule only when its condition first becomes true. It re-arms if the condition turns false again.
 
 A condition is `always`, or comparisons joined with `and` / `or` (no parentheses; `and` binds tighter). A comparison is `<variable> <op> <number>`, where `<op>` is one of `<`, `<=`, `>`, `>=`, `==`, and the number may end in `k` or `M`, e.g. `tokens_left < 5M and reset_5h_min > 30`. A comparison on a variable that's currently unset is false.
 
@@ -49,6 +49,6 @@ Guidelines:
 - Use the user's own numbers. Don't invent thresholds they didn't ask for. If a number is needed and the request doesn't give one, ask instead of guessing.
 - Intent that no measurement can trigger (habits like "estimate each task's tokens before dispatching subagents") becomes an `always` rule, with `"on": "subagent"` when it's about subagents.
 - The current measurements above show the scale (for example, how many tokens are left now). Use them to sanity-check numbers, but not to change what the user asked for.
-- If `set` reports errors, fix the draft and run `set` again.
+- If `rule` or `commit` reports errors, fix that rule with another `rule` command (same id), then `commit` again.
 
-After saving, reply with `set`'s output, then one line on anything you interpreted or couldn't express as a rule.
+After saving, reply with `commit`'s output, then one line on anything you interpreted or couldn't express as a rule.

@@ -139,6 +139,37 @@ assert_contains "clear without plan" "No usage plan to clear." "$(bash "$UP" cle
 assert_contains "context without plan" "Current plan: none" "$(bash "$UP" context S1)"
 assert_contains "bad subcommand" "usage: usage-plan" "$(bash "$UP" frob S1)"
 
+echo "usage-plan begin / rule / commit (no JSON in the shell)"
+setup_dir; seed
+assert_contains "begin" "Draft started with 0 rule(s)" "$(bash "$UP" begin S1 stop at "5M & hand off")"
+assert_contains "rule" "Draft has 1 rule(s)" "$(bash "$UP" rule S1 est always "Estimate the subagent's cost; say it." --subagent)"
+bash "$UP" rule S1 stop "tokens_left < 5M" 'Write HANDOFF.md, then "stop".' --once >/dev/null
+out=$(bash "$UP" rule S1 bad "tokens < 5" x); rc=$?
+assert_eq "bad rule: rc 1" 1 "$rc"
+assert_contains "bad rule: error" "unknown variable: tokens" "$out"
+out=$(bash "$UP" rule S1 nl always $'a\nb'); assert_contains "multi-line do rejected" '"do" must be one line' "$out"
+assert_contains "bad flag" "unknown option --nope" "$(bash "$UP" rule S1 x always y --nope)"
+assert_contains "too few args" "usage: usage-plan rule" "$(bash "$UP" rule S1 x always)"
+bash "$UP" rule S1 stop "tokens_left < 6M" 'Write HANDOFF.md, then "stop".' --once >/dev/null
+out=$(bash "$UP" commit S1); rc=$?
+assert_eq "commit: ok" 0 "$rc"
+assert_contains "commit: saved 2" "Saved 2 rule(s):" "$out"
+p="$USAGE_AWARE_DIR/plans/S1.json"
+assert_eq "source kept" "stop at 5M & hand off" "$(jq -r .source "$p")"
+assert_eq "same id replaced" "tokens_left < 6M" "$(jq -r '.rules[] | select(.id=="stop") | .when' "$p")"
+assert_eq "quotes survive" 'Write HANDOFF.md, then "stop".' "$(jq -r '.rules[1].do' "$p")"
+assert_eq "--subagent" subagent "$(jq -r '.rules[0].on' "$p")"
+assert_eq "--once" true "$(jq -r '.rules[1].once' "$p")"
+assert_eq "no once by default" null "$(jq -r '.rules[0].once' "$p")"
+assert_true "draft removed" test ! -e "$USAGE_AWARE_DIR/plans/S1.draft.json"
+bash "$UP" begin S1 --add more >/dev/null; bash "$UP" rule S1 x always y >/dev/null; bash "$UP" commit S1 >/dev/null
+assert_eq "--add keeps rules" 3 "$(jq '.rules | length' "$p")"
+assert_eq "--add source" more "$(jq -r .source "$p")"
+bash "$UP" begin S1 replace >/dev/null; bash "$UP" rule S1 x always y >/dev/null; bash "$UP" commit S1 >/dev/null
+assert_eq "begin without --add replaces" 1 "$(jq '.rules | length' "$p")"
+bash "$UP" begin S1 empty >/dev/null
+assert_contains "commit empty draft" "plan has no rules" "$(bash "$UP" commit S1)"
+
 echo "speed with a plan"
 setup_dir; seed
 plan "{\"rules\":[$(printf '{"when":"tokens_left < 5M and pct_7d > 1 or steps < 3","do":"x"},%.0s' {1..11}){\"when\":\"always\",\"do\":\"x\",\"once\":true}]}"
