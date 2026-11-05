@@ -39,11 +39,13 @@ plugin=$(mktemp -d); cp -r "$ROOT/scripts" "$plugin/"
 export CLAUDE_PLUGIN_ROOT="$plugin"
 out=$(echo '{"hook_event_name":"SessionStart","source":"startup"}' | bash "$IP"); rc=$?
 assert_eq "exit 0" 0 "$rc"
-for f in usage-status lib.sh; do
+for f in usage-status ua-lib.sh; do
   assert_true "synced $f" test -f "$USAGE_AWARE_DIR/$f"
 done
 assert_true "no statusline script synced" test ! -e "$USAGE_AWARE_DIR/tap-statusline"
 assert_true "usage-status executable" test -x "$USAGE_AWARE_DIR/usage-status"
+echo "UA_PLANS=" >"$USAGE_AWARE_DIR/lib.sh"   # a pre-0.4 session syncing its own lib.sh
+assert_contains "synced usage-plan ignores a stale lib.sh" "Plan file: $USAGE_AWARE_DIR/plans/S1.json" "$(bash "$USAGE_AWARE_DIR/usage-plan" context S1)"
 assert_eq "synced usage-status runs standalone" "$(bash "$SCRIPTS/usage-status.sh")" "$("$USAGE_AWARE_DIR/usage-status")"
 ctx=$(jq -r .hookSpecificOutput.additionalContext <<<"$out")
 assert_eq "hookEventName" SessionStart "$(jq -r .hookSpecificOutput.hookEventName <<<"$out")"

@@ -9,7 +9,9 @@
 #   usage-plan begin <sid> [--add] <source text...>          start a draft (--add: keep current rules)
 #   usage-plan rule <sid> <id> <when> <do> [--subagent] [--once]   add/replace a rule in the draft
 #   usage-plan commit <sid>                                   validate the draft and save it (= set)
-source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/lib.sh"
+# Synced copies use ua-lib.sh: pre-0.4 sessions still sync their own lib.sh.
+ua_here="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")"
+if [[ -f "$ua_here/ua-lib.sh" ]]; then source "$ua_here/ua-lib.sh"; else source "$ua_here/lib.sh"; fi
 
 cmd="${1:-}" sid="${2:-}"
 usage() { echo "usage: usage-plan context|show|set|clear|check|begin|rule|commit <session_id> ..."; exit 2; }

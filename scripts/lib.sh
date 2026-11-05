@@ -8,7 +8,7 @@ UA_HEARTBEAT_MAX=86400
 UA_STALE_SECS=1800
 UA_PLAN_MAX_RULES=12
 UA_PLAN_MAX_DO=300
-UA_SYNC_FILES=(usage-status usage-plan lib.sh)
+UA_SYNC_FILES=(usage-status usage-plan ua-lib.sh)
 
 ua_have_jq() { command -v jq >/dev/null 2>&1; }
 
@@ -127,7 +127,7 @@ ua_sync() {
   local root="$1" name src dest tmp
   mkdir -p "$UA_DIR" || return 1
   for name in "${UA_SYNC_FILES[@]}"; do
-    case $name in *.sh) src="$root/scripts/$name" ;; *) src="$root/scripts/$name.sh" ;; esac
+    case $name in ua-lib.sh) src="$root/scripts/lib.sh" ;; *) src="$root/scripts/$name.sh" ;; esac
     dest="$UA_DIR/$name"
     [[ -f "$src" ]] || continue
     cmp -s "$src" "$dest" && continue

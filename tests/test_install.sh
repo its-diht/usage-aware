@@ -10,7 +10,7 @@ setup_dir; echo '{"statusLine":{"type":"command","command":"x"}}' >"$settings"; 
 out=$(CLAUDE_SETTINGS="$settings" bash "$IN"); rc=$?
 assert_eq "exit 0" 0 "$rc"
 assert_true "synced usage-status" test -x "$USAGE_AWARE_DIR/usage-status"
-assert_true "synced lib.sh" test -f "$USAGE_AWARE_DIR/lib.sh"
+assert_true "synced ua-lib.sh" test -f "$USAGE_AWARE_DIR/ua-lib.sh"
 assert_true "settings file not modified" cmp -s "$settings" "$settings.orig"
 snip=$(snippet "$out")
 assert_eq "snippet is valid JSON" 0 "$(jq -e . <<<"$snip" >/dev/null; echo $?)"

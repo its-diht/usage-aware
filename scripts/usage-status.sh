@@ -2,7 +2,9 @@
 # Prints the usage facts line and, given a session id, that session's active usage-plan rules.
 # The single formatter for the hooks and for Claude's mid-turn checks.
 #   usage-status [session_id] [--on prompt|subagent] [--rules-only]
-source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/lib.sh"
+# Synced copies use ua-lib.sh: pre-0.4 sessions still sync their own lib.sh.
+ua_here="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")"
+if [[ -f "$ua_here/ua-lib.sh" ]]; then source "$ua_here/ua-lib.sh"; else source "$ua_here/lib.sh"; fi
 
 sid="" on="prompt" rules_only=0
 while (($#)); do
