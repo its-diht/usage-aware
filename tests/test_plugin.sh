@@ -10,8 +10,9 @@ while read -r s; do
 done < <(jq -r '.hooks[][].hooks[].command | capture("ROOT}/(?<p>[^\"]+)").p' "$ROOT/hooks/hooks.json")
 assert_eq "SessionStart matcher" "startup|resume|clear|compact|fork" "$(jq -r '.hooks.SessionStart[0].matcher' "$ROOT/hooks/hooks.json")"
 cmdmd="$(cat "$ROOT/commands/usage-plan.md")"
-assert_contains "usage-plan command reads context with the session id" 'scripts/usage-plan.sh" context "${CLAUDE_SESSION_ID}"' "$cmdmd"
-assert_not_contains "user request never reaches a shell line" '!`bash "${CLAUDE_PLUGIN_ROOT}/scripts/usage-plan.sh" context "${CLAUDE_SESSION_ID}" $ARGUMENTS' "$cmdmd"
+assert_contains "usage-plan command reads context with the session id" '!`~/.claude/usage-aware/usage-plan context ${CLAUDE_SESSION_ID}`' "$cmdmd"
+assert_contains "context block is covered by allowed-tools" 'Bash(~/.claude/usage-aware/usage-plan *)' "$cmdmd"
+assert_true "user request never reaches a shell line" bash -c '! grep -q "^!.*ARGUMENTS" "$0"' "$ROOT/commands/usage-plan.md"
 assert_true "thresholds command removed" test ! -e "$ROOT/commands/thresholds.md"
 assert_eq "PreToolUse matcher" "Agent|Task" "$(jq -r '.hooks.PreToolUse[0].matcher' "$ROOT/hooks/hooks.json")"
 assert_true "SessionEnd hook wired" jq -e '.hooks.SessionEnd[0].hooks[0].command | test("carry-plan.sh")' "$ROOT/hooks/hooks.json"

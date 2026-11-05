@@ -4,7 +4,7 @@ argument-hint: <what you want> | show | clear | add <more>
 allowed-tools: Bash(~/.claude/usage-aware/usage-plan *), Write(~/.claude/usage-aware/plans/*.draft.json), Edit(~/.claude/usage-aware/plans/*.draft.json)
 ---
 <usage-plan-context>
-!`bash "${CLAUDE_PLUGIN_ROOT}/scripts/usage-plan.sh" context "${CLAUDE_SESSION_ID}"`
+!`~/.claude/usage-aware/usage-plan context ${CLAUDE_SESSION_ID}`
 </usage-plan-context>
 
 <user-request>
