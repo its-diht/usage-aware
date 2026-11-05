@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# SessionStart hook: dependency check, sync fixed-path script copies, inject the budgeting policy.
+# SessionStart hook: dependency check, sync fixed-path script copies, carry a plan across /clear,
+# and inject the usage-facts glossary.
 here="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")"
 source "$here/lib.sh"
-cat >/dev/null   # discard hook input
+input="$(cat)"
 
 if ! ua_have_jq; then
   printf '%s\n' '{"systemMessage": "usage-aware: jq not found, plugin inactive. Install jq (e.g. sudo apt install jq)."}'
@@ -10,37 +11,53 @@ if ! ua_have_jq; then
 fi
 
 ua_sync "${CLAUDE_PLUGIN_ROOT:-$(dirname "$here")}"
-# The mod can't delete files: prune per-session cost files a week old (it ignores those anyway).
+# The mod can't delete files: prune week-old session cost files and two-week-old plans.
 find "$UA_DIR/sessions" -maxdepth 1 -name '*.json' -mtime +7 -delete 2>/dev/null
-read -r c w < <(ua_thresholds)
-cmd="$UA_DISPLAY_DIR/usage-status"
+find "$UA_PLANS" -maxdepth 1 -name '*.json' -mtime +14 -delete 2>/dev/null
+
+sid="$(jq -r '.session_id // ""' <<<"$input" 2>/dev/null)"
+[[ $sid =~ ^[A-Za-z0-9_-]{1,128}$ ]] || sid=""
+src="$(jq -r '.source // ""' <<<"$input" 2>/dev/null)"
+cwd="$(jq -r '.cwd // ""' <<<"$input" 2>/dev/null)"
+
+# /clear starts a new session id; SessionEnd left a pointer to the old one (see carry-plan.sh).
+carried=""
+if [[ $src == clear && -n $sid ]]; then
+  carry="$UA_PLANS/.carry-$(printf '%s' "$cwd" | cksum | cut -d' ' -f1)"
+  if [[ -f $carry ]] && (( $(date +%s) - $(stat -c %Y "$carry") <= 60 )); then
+    old="$(cat "$carry")"
+    if [[ $old =~ ^[A-Za-z0-9_-]{1,128}$ && -f "$UA_PLANS/$old.json" && ! -f "$UA_PLANS/$sid.json" ]]; then
+      cp "$UA_PLANS/$old.json" "$UA_PLANS/$sid.json" && carried=" (carried over from before /clear)"
+    fi
+    rm -f "$carry"
+  fi
+fi
+
+cmd="$UA_DISPLAY_DIR/usage-status $sid"
+if [[ -n $sid && -f "$UA_PLANS/$sid.json" ]]; then
+  plan_note="This session has a usage plan$carried. Its active rules are listed under the usage line; follow them, they are the user's instructions. Rules marked \"before dispatching a subagent\" arrive right before you spawn one."
+else
+  plan_note="No usage plan is set for this session. Use your own judgment, and size work against the token/steps estimates. The user can set one with /usage-aware:usage-plan <what they want>."
+fi
 
 policy="$(cat <<POLICY
-# usage-aware: plan-usage budgeting policy
+# usage-aware: usage facts
 
-The user's Claude plan has a 5-hour and a 7-day usage window. A usage line like the one below is added to every prompt. The mode comes from whichever window has less left.
+The user's Claude plan has a 5-hour and a 7-day usage window (plus a \`spend\` window on spend-limit accounts). A usage line of plain measurements is added to every prompt. It carries no advice: what to do about usage comes from the user's usage plan, or your own judgment if there is none.
 
-| Mode | When | Rule |
-|---|---|---|
-| NORMAL | ≥ ${c}% left | Work normally, but still size plans against remaining usage. |
-| CONSERVE | ${w}–${c}% left | Small verifiable steps. Avoid fan-outs and subagents. Checkpoint often. |
-| WRAP-UP | < ${w}% left | Finish the current unit. Write a handoff note (done / next / open issues). Ask before starting new work. |
+How to read it:
+- **N% left, resets X:** what's left in each window, and when it refills.
+- **(~N tok):** estimated tokens left in that window. It's learned from how far the % moves per dollar of usage, then converted at the tokens per dollar seen so far. It's plan-independent, so size work in tokens: 10% on one plan can be far more work than on another. It's an estimate: it counts every Claude Code session on this machine, can run low when the account is also used elsewhere, and is missing until calibrated.
+- **at avg rate out in X:** at the window's average rate so far, it runs out before it resets.
+- **≈N steps at Xk context:** tokens left in the tighter window divided by your current context. Each model call (one tool use and its reply) costs about one full context, so this shrinks as context grows and recovers after /compact. A subagent costs its own context per step, plus its result added to yours.
+- **N old / stale:** the age of the reading. "usage unknown" means no data yet (it appears after your first response) or an API-key account.
 
-Two adjustments, shown in parentheses after the mode:
-- **(pace: 5h/7d):** at the average rate so far, that window is on pace to run out before it resets ("pace: out in …"), so the mode is at least CONSERVE.
-- **(… resets soon):** a window resetting within 15 min (5h) or 12 h (7d) counts one step less strict, since it's about to refill.
-A \`spend\` window (spend-limit accounts) counts like the others.
+$plan_note
 
-Token estimate (your main sizing unit): each window may show "(~N tok)", an estimate of the tokens left in it, learned from how far the % moves per dollar of usage, then converted at the tokens per dollar seen so far. It's plan-independent: 10% on one plan can be far more work than 10% on another, so size work by tokens, and use the % and mode as the coarse gate. "≈N steps at Xk context" divides the tighter window's tokens by your current context size. Each model call (a step: one tool use and its reply) costs about one full context, so this shrinks as context grows and grows after /compact. A subagent costs its own context per step, plus its result added to yours. It's an estimate: it counts every Claude Code session on this machine, but can run low when the account is also used elsewhere (claude.ai, other devices), and it's missing until calibrated (the first point or so of movement). With no estimate, size by % alone.
+During long autonomous work, run \`$cmd\` (exactly that command, with the literal path) before major steps and before spawning subagents, to get fresh numbers and any rules that have newly become active.
 
-Rules:
-- Account for usage in every plan. Before multi-step work, estimate its size in steps/tokens against the tokens left in the tighter window (the % if there's no estimate), and leave headroom.
-- Say so when you defer or split work because of usage.
-- Weigh the 7d window as pacing across days, not just the 5h window.
-- During long autonomous work, run \`$cmd\` (exactly that command, with the literal path) before each major step and before spawning subagents. If the mode got stricter, adjust the plan.
-- "usage unknown" means no data yet (it appears after your first response) or an API-key account; fall back to normal judgment.
-
-Current: $(bash "$here/usage-status.sh")
+Current:
+$(bash "$here/usage-status.sh" "$sid")
 POLICY
 )"
 

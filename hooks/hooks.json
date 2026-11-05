@@ -1,5 +1,5 @@
 {
-  "description": "usage-aware: inject budgeting policy at session start and the usage line on every prompt",
+  "description": "usage-aware: usage facts at session start and on every prompt, plus the session's usage-plan rules",
   "hooks": {
     "SessionStart": [
       {
@@ -19,6 +19,29 @@
           {
             "type": "command",
             "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/inject-usage.sh\"",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Agent|Task",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/inject-subagent.sh\"",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/carry-plan.sh\"",
             "timeout": 5
           }
         ]

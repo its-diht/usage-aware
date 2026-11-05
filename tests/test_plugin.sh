@@ -9,7 +9,12 @@ while read -r s; do
   assert_true "hook script exists: $s" test -f "$ROOT/$s"
 done < <(jq -r '.hooks[][].hooks[].command | capture("ROOT}/(?<p>[^\"]+)").p' "$ROOT/hooks/hooks.json")
 assert_eq "SessionStart matcher" "startup|resume|clear|compact|fork" "$(jq -r '.hooks.SessionStart[0].matcher' "$ROOT/hooks/hooks.json")"
-assert_contains "command calls set-thresholds" 'scripts/set-thresholds.sh" $ARGUMENTS' "$(cat "$ROOT/commands/thresholds.md")"
+cmdmd="$(cat "$ROOT/commands/usage-plan.md")"
+assert_contains "usage-plan command reads context with the session id" 'scripts/usage-plan.sh" context "${CLAUDE_SESSION_ID}"' "$cmdmd"
+assert_not_contains "user request never reaches a shell line" '!`bash "${CLAUDE_PLUGIN_ROOT}/scripts/usage-plan.sh" context "${CLAUDE_SESSION_ID}" $ARGUMENTS' "$cmdmd"
+assert_true "thresholds command removed" test ! -e "$ROOT/commands/thresholds.md"
+assert_eq "PreToolUse matcher" "Agent|Task" "$(jq -r '.hooks.PreToolUse[0].matcher' "$ROOT/hooks/hooks.json")"
+assert_true "SessionEnd hook wired" jq -e '.hooks.SessionEnd[0].hooks[0].command | test("carry-plan.sh")' "$ROOT/hooks/hooks.json"
 for f in "$ROOT"/scripts/*.sh; do
   assert_true "syntax ok: $(basename "$f")" bash -n "$f"
 done

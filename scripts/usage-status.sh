@@ -1,77 +1,71 @@
 #!/usr/bin/env bash
-# Prints the usage line. The single formatter for both the hook and Claude.
+# Prints the usage facts line and, given a session id, that session's active usage-plan rules.
+# The single formatter for the hooks and for Claude's mid-turn checks.
+#   usage-status [session_id] [--on prompt|subagent] [--rules-only]
 source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/lib.sh"
 
-unknown() { echo "[usage] usage unknown ($1)"; exit 0; }
-ua_have_jq || unknown "jq not found"
-[[ -f "$UA_STATE" ]] || unknown "no data yet; it appears after Claude's first response in a session"
+sid="" on="prompt" rules_only=0
+while (($#)); do
+  case $1 in
+    --on) on="${2:-prompt}"; shift ;;
+    --rules-only) rules_only=1 ;;
+    *) [[ -z $sid ]] && sid="$1" ;;
+  esac
+  shift
+done
+[[ $sid =~ ^[A-Za-z0-9_-]{1,128}$ ]] || sid=""
+[[ $on == subagent ]] || on="prompt"
 
-read -r conserve wrapup < <(ua_thresholds)
+ua_have_jq || { echo "[usage] usage unknown (jq not found)"; exit 0; }
+now="${UA_NOW:-$(date +%s)}"
 
-render() {
-  jq -r --argjson now "${UA_NOW:-$(date +%s)}" --argjson c "$conserve" --argjson w "$wrapup" \
-        --argjson stale "$UA_STALE_SECS" --argjson pace "$UA_PACE_JSON" \
-        --argjson minel "$UA_PACE_MIN_ELAPSED" "$UA_JQ_DUR"'
-  def names: ["NORMAL", "CONSERVE", "WRAP-UP"];
-  def rules: ["work normally, but size plans against remaining usage",
-              "small verifiable steps, no fan-outs/subagents, checkpoint often",
-              "finish the current unit, write a handoff note (done / next / open issues), ask before starting new work"];
-  def level($left): if $left >= $c then 0 elif $left >= $w then 1 else 2 end;
-  def ftok: if . >= 1e7 then "\(. / 1e6 | round)M" elif . >= 1e6 then "\((. / 1e5 | round) / 10)M"
-            elif . >= 1e3 then "\(. / 1e3 | round)k" else "\(round)" end;
-  # Estimated tokens left in a window, from the mod'"'"'s learned tokens per 1%.
-  def toks($left): if (.tokens_per_pct | type) == "number" and .tokens_per_pct > 0 then $left * .tokens_per_pct else null end;
-  def tokstr($t): if $t == null then "" else " (~\($t | ftok) tok)" end;
+# ---- facts ----
+facts='{"vars":{},"line":""}'
+if [[ -f "$UA_STATE" ]]; then
+  for _ in 1 2; do   # the mod may be mid-write; retry once
+    f="$(jq -c --argjson now "$now" "$UA_JQ_DUR$UA_JQ_FACTS"' facts' "$UA_STATE" 2>/dev/null)" && [[ -n $f ]] && { facts="$f"; break; }
+    sleep 0.05
+  done
+  [[ $f == "$facts" ]] || facts='{"vars":{},"line":"[usage] usage unknown (state file unreadable)"}'
+  [[ $(jq -r .known <<<"$facts") == 0 ]] && facts='{"vars":{},"line":"[usage] usage unknown (no rate_limits windows in data)"}'
+else
+  facts='{"vars":{},"line":"[usage] usage unknown (no data yet; it appears after Claude'"'"'s first response in a session)"}'
+fi
+line="$(jq -r .line <<<"$facts")"
 
-  # One window -> {txt, level (raw), adj (after pace/relax), why}
-  def win($key; $label):
-    ($pace[$key]) as $p
-    | if type != "object" or (.used_percentage | type) != "number" then {txt: "\($label): n/a"}
-      elif (.resets_at | type) == "number" and .resets_at <= $now then
-        toks(100) as $t | {txt: "\($label): 100% left\(tokstr($t)) (reset)", level: 0, adj: 0, tok: $t}
-      else
-        (.used_percentage) as $used
-        | ([100 - $used, 0] | max) as $left
-        | (if (.resets_at | type) == "number" then .resets_at - $now else null end) as $ttr
-        | level($left) as $lv
-        | toks($left) as $t
-        | (if $p != null and $ttr != null and $ttr <= $p.soon then "soon"
-           elif $p != null and $ttr != null and $used > 0 and $left > 0 and ($p.len - $ttr) >= $minel * $p.len
-                and ($left * ($p.len - $ttr) / $used) < $ttr then "pace"
-           else null end) as $why
-        | (if $why == "pace" then ($left * ($p.len - $ttr) / $used) else null end) as $runway
-        | {level: $lv,
-           adj: (if $why == "soon" then ([$lv - 1, 0] | max) elif $why == "pace" then ([$lv, 1] | max) else $lv end),
-           why: $why, tok: $t,
-           txt: ("\($label): \($left | floor)% left" + tokstr($t) + (if $left <= 0 then " (limit reached)" else "" end)
-                 + (if $ttr != null then ", resets \($ttr | dur)" else "" end)
-                 + (if $runway != null then ", pace: out in \($runway | dur)" else "" end))}
-      end
-    | . + {label: $label};
+# ---- plan ----
+plan="$UA_PLANS/$sid.json" pstate="$UA_PLANS/$sid.state.json"
+rules=""
+if [[ -n $sid && -f $plan ]]; then
+  out="$(jq -c --argjson facts "$facts" --arg on "$on" --slurpfile st <(cat "$pstate" 2>/dev/null || echo '{}') \
+        "$UA_JQ_RULES"'
+    ($st[0].fired // {}) as $fired | $facts.vars as $v
+    | plan_errors as $err
+    | if ($err | length) > 0 then {text: "Usage plan: invalid, ignored (\($err | first)). Fix it with /usage-aware:usage-plan.", fired: $fired}
+      else [.rules | to_entries[] | .key as $i | .value | . + {id: rid($i), active: (.when | when_true($v))}] as $rs
+        | [$rs[] | select((.on // "prompt") == $on)] as $mine
+        | [$mine[] | select(.active and ((.once // false) and ($fired[.id] // false) | not))] as $show
+        | ($fired + ([$mine[] | select(.once // false) | {(.id): .active}] | add // {})) as $nf
+        | {fired: $nf,
+           text: (if ($show | length) > 0
+                  then (if $on == "subagent" then "Usage plan (before dispatching a subagent):" else "Usage plan (active):" end)
+                       + ([$show[] | "\n- [\(.id)] \(.do)"] | join(""))
+                  elif $on == "prompt" then "Usage plan: \($rs | length) rule(s), none active now."
+                  else "" end)}
+      end' "$plan" 2>/dev/null)"
+  if [[ -z $out ]]; then
+    rules="Usage plan: unreadable, ignored (not valid JSON). Fix it with /usage-aware:usage-plan."
+  else
+    rules="$(jq -r .text <<<"$out")"
+    nf="$(jq -c '{fired: .fired}' <<<"$out")"
+    [[ $nf == "$(jq -c '{fired: (.fired // {})}' "$pstate" 2>/dev/null || echo '{"fired":{}}')" ]] || ua_write_atomic "$pstate" "$nf"
+  fi
+fi
 
-  . as $state
-  | [ (.five_hour | win("five_hour"; "5h")), (.seven_day | win("seven_day"; "7d")) ]
-  + (if (.spend_limit | type) == "object" then [.spend_limit | win("spend_limit"; "spend")] else [] end)
-  | . as $ws
-  | ($ws | map(select(.level != null))) as $known
-  | if ($known | length) == 0 then "[usage] usage unknown (no rate_limits windows in data)"
-    else ($known | map(.adj) | max) as $m
-      | ($known | map(.level) | max) as $raw
-      | (if $m > $raw then " (pace: \($known | map(select(.why == "pace" and .adj == $m) | .label) | join(", ")))"
-         elif $m < $raw then " (\($known | map(select(.why == "soon" and .level == $raw) | .label) | join(", ")) resets soon)"
-         else "" end) as $reason
-      | ($known | map(.tok | select(. != null)) | min) as $mintok
-      | ($state.context_tokens) as $ctx
-      | (if $mintok != null and ($ctx | type) == "number" and $ctx > 0
-         then " · ≈\($mintok / $ctx | floor) steps at \($ctx | ftok) context" else "" end) as $steps
-      | "[usage] mode: \(names[$m])\($reason) · \($ws | map(.txt) | join(" · "))\($steps) · \($now - $state.updated_at | dur) old"
-        + (if ($now - $state.updated_at) > $stale then " · stale" else "" end)
-        + "\n        → \(rules[$m])"
-    end
-' "$UA_STATE" 2>/dev/null
-}
-out="$(render)"
-[[ -n "$out" ]] || { sleep 0.05; out="$(render)"; }   # writer may be mid-write; retry once
-[[ -n "$out" ]] || unknown "state file unreadable"
-printf '%s\n' "$out"
+if ((rules_only)); then
+  [[ -n $rules ]] && printf '%s\n' "$rules"
+else
+  printf '%s\n' "$line"
+  [[ -n $rules ]] && printf '%s\n' "$rules"
+fi
 exit 0

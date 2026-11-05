@@ -19,5 +19,7 @@ assert_not_contains() {
   [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "unexpected: $2 | got: $3"; }
 assert_true() { # name cmd...
   local n="$1"; shift; if "$@"; then ok "$n"; else bad "$n" "command failed: $*"; fi; }
+assert_false() { # name cmd...
+  local n="$1"; shift; if "$@"; then bad "$n" "command succeeded: $*"; else ok "$n"; fi; }
 
 finish() { printf '%s: %d passed, %d failed\n' "$(basename "$0")" "$PASS" "$FAIL"; [[ $FAIL -eq 0 ]]; }

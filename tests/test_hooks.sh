@@ -47,17 +47,56 @@ assert_true "usage-status executable" test -x "$USAGE_AWARE_DIR/usage-status"
 assert_eq "synced usage-status runs standalone" "$(bash "$SCRIPTS/usage-status.sh")" "$("$USAGE_AWARE_DIR/usage-status")"
 ctx=$(jq -r .hookSpecificOutput.additionalContext <<<"$out")
 assert_eq "hookEventName" SessionStart "$(jq -r .hookSpecificOutput.hookEventName <<<"$out")"
-for needle in NORMAL CONSERVE WRAP-UP "Account for usage in every plan" "defer or split" "7d" \
-              "$USAGE_AWARE_DIR/usage-status" "before spawning subagents" "[usage] mode: CONSERVE" \
-              "on pace to run out" "resets soon" "spend"; do
+for needle in "plain measurements" "(~N tok)" "steps at" "No usage plan is set" "/usage-aware:usage-plan" \
+              "$USAGE_AWARE_DIR/usage-status" "before spawning subagents" "[usage] 5h: 34% left"; do
   assert_contains "policy mentions: $needle" "$needle" "$ctx"
 done
+assert_not_contains "no modes" "CONSERVE" "$ctx"
 assert_true "no systemMessage when healthy" test "$(jq -r '.systemMessage // "none"' <<<"$out")" = none
 
-echo "inject-policy: thresholds reflected in policy"
-bash "$SCRIPTS/set-thresholds.sh" 60 25 >/dev/null
-ctx=$(echo '{}' | bash "$IP" | jq -r .hookSpecificOutput.additionalContext)
-assert_contains "custom conserve in table" "25–60% left" "$ctx"
+echo "inject-policy: session id, plan note"
+mkdir -p "$USAGE_AWARE_DIR/plans"
+echo '{"rules":[{"id":"h","when":"pct_5h < 50","do":"hand off"}]}' >"$USAGE_AWARE_DIR/plans/S1.json"
+ctx=$(echo '{"session_id":"S1","source":"resume"}' | bash "$IP" | jq -r .hookSpecificOutput.additionalContext)
+assert_contains "per-session status command" "$USAGE_AWARE_DIR/usage-status S1" "$ctx"
+assert_contains "plan note" "This session has a usage plan" "$ctx"
+assert_contains "active rule shown" "- [h] hand off" "$ctx"
+
+echo "plan carried across /clear"
+cc='{"session_id":"S1","reason":"clear","cwd":"/proj"}'
+echo "$cc" | bash "$SCRIPTS/carry-plan.sh"
+ctx=$(echo '{"session_id":"S2","source":"clear","cwd":"/other"}' | bash "$IP" | jq -r .hookSpecificOutput.additionalContext)
+assert_true "other directory: not carried" test ! -e "$USAGE_AWARE_DIR/plans/S2.json"
+ctx=$(echo '{"session_id":"S3","source":"clear","cwd":"/proj"}' | bash "$IP" | jq -r .hookSpecificOutput.additionalContext)
+assert_true "same directory: carried" cmp -s "$USAGE_AWARE_DIR/plans/S1.json" "$USAGE_AWARE_DIR/plans/S3.json"
+assert_contains "says carried" "carried over from before /clear" "$ctx"
+assert_true "pointer consumed" test -z "$(ls -A "$USAGE_AWARE_DIR/plans" | grep carry)"
+echo '{"session_id":"S1","reason":"other","cwd":"/proj"}' | bash "$SCRIPTS/carry-plan.sh"
+assert_true "non-clear end leaves no pointer" test -z "$(ls -A "$USAGE_AWARE_DIR/plans" | grep carry)"
+echo "$cc" | bash "$SCRIPTS/carry-plan.sh"; touch -d '2 minutes ago' "$USAGE_AWARE_DIR"/plans/.carry-*
+echo '{"session_id":"S4","source":"clear","cwd":"/proj"}' | bash "$IP" >/dev/null
+assert_true "stale pointer ignored" test ! -e "$USAGE_AWARE_DIR/plans/S4.json"
+
+echo "inject-usage: plan rules"
+setup_dir; seed; mkdir -p "$USAGE_AWARE_DIR/plans"
+echo '{"rules":[{"id":"h","when":"pct_5h < 50","do":"hand off"},{"id":"sa","when":"always","on":"subagent","do":"estimate first"}]}' \
+  >"$USAGE_AWARE_DIR/plans/S1.json"
+ctx=$(echo '{"session_id":"S1"}' | bash "$IU" | jq -r .hookSpecificOutput.additionalContext)
+assert_contains "active prompt rule" "- [h] hand off" "$ctx"
+assert_not_contains "subagent rule not on prompts" "estimate first" "$ctx"
+ctx=$(echo '{"session_id":"S9"}' | bash "$IU" | jq -r .hookSpecificOutput.additionalContext)
+assert_not_contains "other session: no plan" "Usage plan" "$ctx"
+
+echo "inject-subagent (PreToolUse)"
+out=$(echo '{"session_id":"S1","tool_name":"Agent"}' | bash "$SCRIPTS/inject-subagent.sh"); rc=$?
+assert_eq "exit 0" 0 "$rc"
+assert_eq "hookEventName" PreToolUse "$(jq -r .hookSpecificOutput.hookEventName <<<"$out")"
+assert_contains "subagent rule" "- [sa] estimate first" "$(jq -r .hookSpecificOutput.additionalContext <<<"$out")"
+assert_contains "with usage line" "[usage] 5h:" "$(jq -r .hookSpecificOutput.additionalContext <<<"$out")"
+assert_eq "never decides permission" null "$(jq -r .hookSpecificOutput.permissionDecision <<<"$out")"
+out=$(echo '{"session_id":"S9","tool_name":"Agent"}' | bash "$SCRIPTS/inject-subagent.sh")
+assert_eq "no plan: silent" "" "$out"
+export CLAUDE_PLUGIN_ROOT="$plugin"; setup_dir; seed; echo '{}' | bash "$IP" >/dev/null
 
 echo "inject-policy: sync only when changed"
 m1=$(stat -c %Y.%i "$USAGE_AWARE_DIR/usage-status")
@@ -78,7 +117,7 @@ unset CLAUDE_PLUGIN_ROOT
 
 echo "step 4: missing jq"
 fake=$(mktemp -d)
-for b in bash cat cmp cp chmod date dirname mkdir mktemp mv readlink rm sed; do ln -s "$(command -v $b)" "$fake/$b"; done
+for b in bash cat cmp cp chmod date dirname mkdir mktemp mv readlink rm sed find stat cksum cut; do ln -s "$(command -v $b)" "$fake/$b"; done
 setup_dir; seed
 out=$(echo '{}' | PATH="$fake" "$fake/bash" "$IP" 2>&1); rc=$?
 assert_eq "policy exit 0" 0 "$rc"
@@ -92,7 +131,9 @@ assert_eq "inject-usage silent" "" "$out"
 out=$(PATH="$fake" "$fake/bash" "$SCRIPTS/usage-status.sh" 2>&1); rc=$?
 assert_eq "usage-status exit 0" 0 "$rc"
 assert_contains "usage-status says jq missing" "jq not found" "$out"
-out=$(PATH="$fake" "$fake/bash" "$SCRIPTS/set-thresholds.sh" 60 25 2>&1)
-assert_contains "set-thresholds says jq missing" "jq not found" "$out"
+out=$(PATH="$fake" "$fake/bash" "$SCRIPTS/usage-plan.sh" show S1 2>&1)
+assert_contains "usage-plan says jq missing" "jq not found" "$out"
+out=$(echo '{"session_id":"S1"}' | PATH="$fake" "$fake/bash" "$SCRIPTS/inject-subagent.sh" 2>&1)
+assert_eq "inject-subagent silent" "" "$out"
 
 finish

@@ -1,6 +1,6 @@
 # usage-aware v0.4: usage facts and per-session usage plans (spec)
 
-Status: draft, 2026-11-05. Not implemented yet.
+Status: implemented in v0.4.0 (2026-11-05). Open questions resolved: `${CLAUDE_SESSION_ID}` is substituted in command files; PreToolUse `additionalContext` reaches the model; plugin commands need the full `/usage-aware:usage-plan` name; `/clear` changes the session id (SessionEnd reason `clear`), so the plan is carried via a pointer keyed by working directory; forks start without a plan.
 
 ## Goal
 

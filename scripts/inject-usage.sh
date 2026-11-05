@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# UserPromptSubmit hook: injects the current usage line into Claude's context.
+# UserPromptSubmit hook: injects the usage line and this session's active plan rules.
 # Also warns the user once per session when the bundled mod isn't feeding data.
 here="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")"
 source "$here/lib.sh"
@@ -14,7 +14,7 @@ if (( $(date +%s) - ${hb:-0} > UA_HEARTBEAT_MAX )) && [[ "$(cat "$UA_DIR/warned"
   ua_write_atomic "$UA_DIR/warned" "$sid"
 fi
 
-bash "$here/usage-status.sh" | jq -Rsc --arg warn "$warn" '
+bash "$here/usage-status.sh" "$sid" | jq -Rsc --arg warn "$warn" '
   {hookSpecificOutput: {hookEventName: "UserPromptSubmit", additionalContext: rtrimstr("\n")}}
   + (if $warn != "" then {systemMessage: $warn} else {} end)'
 exit 0
