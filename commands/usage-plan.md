@@ -1,7 +1,7 @@
 ---
 description: Set this session's usage plan from a prompt (or show / clear it)
 argument-hint: <what you want> | show | clear | add <more>
-allowed-tools: Bash(~/.claude/usage-aware/usage-plan *), Bash(bash:*)
+allowed-tools: Bash(~/.claude/usage-aware/usage-plan *), Write(~/.claude/usage-aware/plans/*.draft.json), Edit(~/.claude/usage-aware/plans/*.draft.json)
 ---
 <usage-plan-context>
 !`bash "${CLAUDE_PLUGIN_ROOT}/scripts/usage-plan.sh" context "${CLAUDE_SESSION_ID}"`
@@ -21,13 +21,10 @@ Do one of these, depending on the request:
 
 ## Writing the plan
 
-Save it in one command, with the JSON on stdin:
-
-```
-~/.claude/usage-aware/usage-plan set ${CLAUDE_SESSION_ID} <<'PLAN'
-{"source": "<the user's request, verbatim>", "rules": [ ... ]}
-PLAN
-```
+Save it in two steps:
+1. Use the Write tool to write the JSON to `~/.claude/usage-aware/plans/${CLAUDE_SESSION_ID}.draft.json`:
+   `{"source": "<the user's request, verbatim>", "rules": [ ... ]}`
+2. Run `~/.claude/usage-aware/usage-plan set ${CLAUDE_SESSION_ID}`. It validates the draft, saves it as the plan, and deletes the draft. Don't pass JSON through the shell.
 
 Each rule is `{"id": "short-kebab-name", "when": "<condition>", "do": "<instruction to yourself>"}`, with two optional fields:
 - `"on": "subagent"`: deliver the rule only right before you dispatch a subagent, instead of with every prompt.
@@ -52,6 +49,6 @@ Guidelines:
 - Use the user's own numbers. Don't invent thresholds they didn't ask for. If a number is needed and the request doesn't give one, ask instead of guessing.
 - Intent that no measurement can trigger (habits like "estimate each task's tokens before dispatching subagents") becomes an `always` rule, with `"on": "subagent"` when it's about subagents.
 - The current measurements above show the scale (for example, how many tokens are left now). Use them to sanity-check numbers, but not to change what the user asked for.
-- If `set` reports errors, fix the JSON and run it again.
+- If `set` reports errors, fix the draft and run `set` again.
 
 After saving, reply with `set`'s output, then one line on anything you interpreted or couldn't express as a rule.

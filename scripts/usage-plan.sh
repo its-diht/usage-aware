@@ -2,7 +2,7 @@
 # Manages a session's usage plan (~/.claude/usage-aware/plans/<session_id>.json).
 #   usage-plan context <sid>   current measurements + current plan (for writing a plan)
 #   usage-plan show <sid>      the plan, each rule marked active/inactive now
-#   usage-plan set <sid>       validate a plan from stdin and save it (replaces the old one)
+#   usage-plan set <sid>       validate plans/<sid>.draft.json (or stdin) and save it as the plan
 #   usage-plan clear <sid>     delete the plan
 #   usage-plan check <sid>     validate the saved plan
 source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/lib.sh"
@@ -54,11 +54,13 @@ case $cmd in
     printf 'Invalid:\n%s\n' "$errs"; exit 1
     ;;
   set)
-    new="$(cat)"
+    draft="$UA_PLANS/$sid.draft.json"
+    if [[ -f $draft ]]; then new="$(cat "$draft")"; else new="$(cat)"; fi
     errs="$(jq -r "$UA_JQ_RULES"'plan_errors[]' <<<"$new" 2>/dev/null)" || errs="not valid JSON"
+    [[ -n "${new//[[:space:]]/}" ]] || errs="no plan given (write it to $draft first)"
     if [[ -n $errs ]]; then printf 'Not saved. Fix these and run set again:\n%s\n' "$errs" | sed '2,$s/^/  - /'; exit 1; fi
     saved="$(jq --argjson now "$now" '{version: 1} + . + {created_at: $now}' <<<"$new")"
-    mkdir -p "$UA_PLANS" && ua_write_atomic "$plan" "$saved" && rm -f "$pstate" || { echo "usage-plan: could not write $plan"; exit 1; }
+    mkdir -p "$UA_PLANS" && ua_write_atomic "$plan" "$saved" && rm -f "$pstate" "$draft" || { echo "usage-plan: could not write $plan"; exit 1; }
     echo "Saved $(jq '.rules | length' <<<"$saved") rule(s):"
     render "$(vars)" "$plan"
     ;;

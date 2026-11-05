@@ -60,6 +60,7 @@ echo '{"rules":[{"id":"h","when":"pct_5h < 50","do":"hand off"}]}' >"$USAGE_AWAR
 ctx=$(echo '{"session_id":"S1","source":"resume"}' | bash "$IP" | jq -r .hookSpecificOutput.additionalContext)
 assert_contains "per-session status command" "$USAGE_AWARE_DIR/usage-status S1" "$ctx"
 assert_contains "plan note" "This session has a usage plan" "$ctx"
+assert_contains "plan framed as usage-only" "A plan is only about usage" "$ctx"
 assert_contains "active rule shown" "- [h] hand off" "$ctx"
 
 echo "plan carried across /clear"

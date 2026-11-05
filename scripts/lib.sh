@@ -112,7 +112,8 @@ def plan_errors:
                   elif ($r.do | length) > '"$UA_PLAN_MAX_DO"' then ["rule \($i + 1): \"do\" over '"$UA_PLAN_MAX_DO"' characters"] else [] end)
                + (if ($r.on // "prompt") | IN("prompt", "subagent") then [] else ["rule \($i + 1): \"on\" must be prompt or subagent"] end)
                + (if ($r.once // false) | type == "boolean" then [] else ["rule \($i + 1): \"once\" must be true or false"] end)
-               + (if ($r.id // "x") | type == "string" then [] else ["rule \($i + 1): \"id\" must be a string"] end)
+               + (if ($r.do | type) == "string" and ($r.do | test("[\u0001-\u001f\u007f]")) then ["rule \($i + 1): \"do\" must be one line, without control characters"] else [] end)
+               + (if ($r.id // "x") | type == "string" and test("^[A-Za-z0-9][A-Za-z0-9_-]{0,39}$") then [] else ["rule \($i + 1): \"id\" must be 1-40 letters, digits, - or _"] end)
             end)[]])
   end;
 def rid($i): (.id // "rule\($i + 1)");
