@@ -21,7 +21,7 @@ Do one of these, depending on the request:
 
 ## Writing the plan
 
-Build it with one shell command per step. Don't write JSON or files yourself; the script does that:
+Build it with one shell command per step. Don't write JSON or files yourself; the script does that. Run each command as its own Bash call, with the literal path and session id: no shell variables, `&&`, `;` or line continuations. Only plain single commands are pre-approved.
 1. `~/.claude/usage-aware/usage-plan begin ${CLAUDE_SESSION_ID} "<the user's request, verbatim>"` starts a draft. For an `add` request, use `begin ${CLAUDE_SESSION_ID} --add "<request>"` to keep the current rules.
 2. For each rule, run `~/.claude/usage-aware/usage-plan rule ${CLAUDE_SESSION_ID} <id> "<when>" "<do>" [--subagent] [--once]`. Use one command per rule and double-quote `when` and `do`. Reusing an id replaces that rule.
 3. Run `~/.claude/usage-aware/usage-plan commit ${CLAUDE_SESSION_ID}`. It validates the draft and saves it as the plan.
