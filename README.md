@@ -37,10 +37,10 @@ No statusline setup is needed. If you used v0.1's `tap-statusline`, remove that 
 By default Claude just gets the numbers and uses its own judgment. To decide yourself how it should handle usage, set a plan for the session:
 
 ```
-/usage-aware:usage-plan try to predict token usage of each task before dispatching subagents, aim to stop at ~5M remaining tokens, in which case create a handoff doc
+/usage-aware:usage-plan create
 ```
 
-Claude turns that into a few rules, each with a condition that a script checks against live measurements:
+Claude asks you two or three rounds of multiple-choice questions: what the plan should do, which thresholds to use (with options sized from your current usage), and, for larger plans, a final check of the rules. You can add a starting idea, e.g. `create stop at 5M tokens left and write a handoff`, and Claude will skip questions it already answers. Your answers become a few rules, each with a condition that a script checks against live measurements:
 
 ```
   ○ inactive  [estimate-subagents] when always, before subagents
@@ -53,8 +53,8 @@ A rule is handed to Claude only while its condition holds, on every prompt and w
 
 | Command | Effect |
 |---|---|
-| `/usage-aware:usage-plan <what you want>` | Write this session's plan (replaces the old one) |
-| `/usage-aware:usage-plan add <more>` | Add rules to the plan |
+| `/usage-aware:usage-plan create [idea]` | Build this session's plan through a short Q&A (replaces the old one) |
+| `/usage-aware:usage-plan add [idea]` | The same Q&A, adding rules to the plan |
 | `/usage-aware:usage-plan` or `… show` | Show the plan, each rule marked active or inactive |
 | `/usage-aware:usage-plan clear` | Remove the plan |
 | `/usage-color #ff8800` | Color of the usage bars above the prompt (`reset` for the default) |
@@ -114,7 +114,7 @@ Caveats: no estimate appears until the first whole point of movement. Each sessi
 
 ## Upgrading from 0.3
 
-0.4 removes the NORMAL / CONSERVE / WRAP-UP modes and `/usage-aware:thresholds`. Claude now gets facts only, plus whatever plan you set. To get the old behaviour back, set it as a plan, e.g. `/usage-aware:usage-plan below 50% left in either window: small steps and no subagents; below 20%: finish the current unit, write a handoff note and ask before new work`. A leftover `~/.claude/usage-aware/config.json` is ignored and can be deleted.
+0.4 removes the NORMAL / CONSERVE / WRAP-UP modes and `/usage-aware:thresholds`. Claude now gets facts only, plus whatever plan you set. To get the old behaviour back, set it as a plan, e.g. `/usage-aware:usage-plan create below 50% left in either window: small steps and no subagents; below 20%: finish the current unit, write a handoff note and ask before new work`. A leftover `~/.claude/usage-aware/config.json` is ignored and can be deleted.
 
 ## Uninstall
 

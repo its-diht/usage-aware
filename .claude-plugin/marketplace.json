@@ -6,7 +6,7 @@
     {
       "name": "usage-aware",
       "description": "Keeps Claude aware of your remaining 5-hour and 7-day plan usage and budgets work against it.",
-      "version": "0.4.6",
+      "version": "0.4.7",
       "source": "./"
     }
   ]

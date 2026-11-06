@@ -72,7 +72,7 @@ case $cmd in
     ;;
   show)
     if [[ -f $plan ]]; then echo "Usage plan for this session:"; render "$(vars)" "$plan"
-    else echo "No usage plan for this session. Set one with /usage-aware:usage-plan <what you want>."; fi
+    else echo "No usage plan for this session. Set one with /usage-aware:usage-plan create."; fi
     ;;
   clear)
     if [[ -f $plan ]]; then rm -f "$plan" "$pstate"; echo "Usage plan cleared."; else echo "No usage plan to clear."; fi

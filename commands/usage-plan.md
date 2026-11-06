@@ -1,7 +1,7 @@
 ---
-description: Set this session's usage plan from a prompt (or show / clear it)
-argument-hint: <what you want> | show | clear | add <more>
-allowed-tools: Bash(~/.claude/usage-aware/usage-plan *)
+description: Create this session's usage plan through a short Q&A (or add to, show, clear it)
+argument-hint: create [idea] | add [idea] | show | clear
+allowed-tools: Bash(~/.claude/usage-aware/usage-plan *), AskUserQuestion
 ---
 <usage-plan-context>
 !`~/.claude/usage-aware/usage-plan context ${CLAUDE_SESSION_ID}`
@@ -17,12 +17,24 @@ Do one of these, depending on the request:
 
 - **Empty or `show`:** run `~/.claude/usage-aware/usage-plan show ${CLAUDE_SESSION_ID}` and reply with its output verbatim, nothing else.
 - **`clear`:** run `~/.claude/usage-aware/usage-plan clear ${CLAUDE_SESSION_ID}` and reply with its output verbatim, nothing else.
-- **Anything else** is the user's intent for a plan. Translate it into rules and save them (below). If it starts with `add`, keep the current plan's rules and add to them. Otherwise replace the plan.
+- **`create [idea]`:** interview the user (below), then save a new plan that replaces the current one. Any text after `create` is their starting idea.
+- **`add [idea]`:** the same interview, but focused on what to add. Keep the current plan's rules.
+- **Anything else:** reply only with: `Usage: /usage-aware:usage-plan create [idea] | add [idea] | show | clear`. Don't build a plan from it.
+
+## Interview (2–3 rounds)
+
+Use the AskUserQuestion tool for every round. Each round asks 1–4 questions, and each question offers 2–4 concrete options (the user can always type their own answer). Don't ask about anything the starting idea already answers. Stop as soon as you can write every rule without guessing.
+
+1. **Goals.** What the plan should do, for example: stop and write a handoff at some point, get a warning first, pace work so the 5h or 7d window lasts until it resets, or habits such as estimating each subagent's cost before dispatching it. Use multiSelect here.
+2. **Numbers and actions.** For each goal that needs a threshold, ask for the number and offer options sized from the current measurements above (for example, if 12M tokens are left, offer 3M / 5M / 8M). Ask what to do once it triggers (for example: hand off and stop, ask before new work, or switch to small steps with no subagents).
+3. **Confirm (only if something is still ambiguous, or the plan has 3 or more rules).** Show the rules you'll save as plain lines (`when … → do …`), and offer Save / Change something. If the user picks Change, apply their notes, then save without another round.
+
+Never invent a threshold the user didn't choose or type.
 
 ## Writing the plan
 
 Build it with one shell command per step. Don't write JSON or files yourself; the script does that. Run each command as its own Bash call, with the literal path and session id: no shell variables, `&&`, `;` or line continuations. Only plain single commands are pre-approved.
-1. `~/.claude/usage-aware/usage-plan begin ${CLAUDE_SESSION_ID} "<the user's request, verbatim>"` starts a draft. For an `add` request, use `begin ${CLAUDE_SESSION_ID} --add "<request>"` to keep the current rules.
+1. `~/.claude/usage-aware/usage-plan begin ${CLAUDE_SESSION_ID} "<one-sentence summary of what the user chose>"` starts a draft. For `add`, use `begin ${CLAUDE_SESSION_ID} --add "<summary>"` to keep the current rules.
 2. For each rule, run `~/.claude/usage-aware/usage-plan rule ${CLAUDE_SESSION_ID} <id> "<when>" "<do>" [--subagent] [--once]`. Use one command per rule and double-quote `when` and `do`. Reusing an id replaces that rule.
 3. Run `~/.claude/usage-aware/usage-plan commit ${CLAUDE_SESSION_ID}`. It validates the draft and saves it as the plan.
 
@@ -45,10 +57,10 @@ A condition is `always`, or comparisons joined with `and` / `or` (no parentheses
 | `age_min` | age of the usage reading, in minutes |
 
 Guidelines:
-- Use the smallest set of rules that covers the request, at most 12. Each `do` is under 300 characters, concrete, and says what to do, not why.
-- Use the user's own numbers. Don't invent thresholds they didn't ask for. If a number is needed and the request doesn't give one, ask instead of guessing.
+- Use the smallest set of rules that covers what the user chose, at most 12. Each `do` is under 300 characters, concrete, and says what to do, not why.
+- Use only the numbers the user chose in the interview.
 - Intent that no measurement can trigger (habits like "estimate each task's tokens before dispatching subagents") becomes an `always` rule, with `--subagent` when it's about subagents.
 - The current measurements above show the scale (for example, how many tokens are left now). Use them to sanity-check numbers, but not to change what the user asked for.
 - If `rule` or `commit` reports errors, fix that rule with another `rule` command (same id), then `commit` again.
 
-After saving, reply with `commit`'s output, then one line on anything you interpreted or couldn't express as a rule.
+After saving, reply with `commit`'s output. If anything the user asked for couldn't be expressed as a rule, add one line saying what.
