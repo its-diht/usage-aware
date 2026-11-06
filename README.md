@@ -49,7 +49,7 @@ Claude turns that into a few rules, each with a condition that a script checks a
       → Finish the current unit, write HANDOFF.md (done / next / open issues), then stop and report.
 ```
 
-A rule is handed to Claude only while its condition holds, on every prompt and when Claude checks usage mid-turn. Rules marked "before subagents" arrive right before Claude spawns a subagent. Checking the conditions is plain `jq`, so it uses no usage.
+A rule is handed to Claude only while its condition holds, on every prompt and when Claude checks usage mid-turn. Rules marked "before subagents" are listed under their own header, so Claude applies them before it dispatches a subagent, and they are repeated when the subagent is dispatched. Checking the conditions is plain `jq`, so it uses no usage.
 
 | Command | Effect |
 |---|---|

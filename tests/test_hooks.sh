@@ -86,7 +86,7 @@ echo '{"rules":[{"id":"h","when":"pct_5h < 50","do":"hand off"},{"id":"sa","when
   >"$USAGE_AWARE_DIR/plans/S1.json"
 ctx=$(echo '{"session_id":"S1"}' | bash "$IU" | jq -r .hookSpecificOutput.additionalContext)
 assert_contains "active prompt rule" "- [h] hand off" "$ctx"
-assert_not_contains "subagent rule not on prompts" "estimate first" "$ctx"
+assert_contains "subagent rule listed ahead of dispatch" "before the call):"$'\n'"- [sa] estimate first" "$ctx"
 ctx=$(echo '{"session_id":"S9"}' | bash "$IU" | jq -r .hookSpecificOutput.additionalContext)
 assert_not_contains "other session: no plan" "Usage plan" "$ctx"
 

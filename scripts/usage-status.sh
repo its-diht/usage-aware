@@ -48,12 +48,20 @@ if [[ -n $sid && -f $plan ]]; then
         | [$rs[] | select((.on // "prompt") == $on)] as $mine
         | [$mine[] | select(.active and ((.once // false) and ($fired[.id] // false) | not))] as $show
         | ($fired + ([$mine[] | select(.once // false) | {(.id): .active}] | add // {})) as $nf
+        # PreToolUse context only reaches Claude after the dispatch, so prompts also list active subagent rules.
+        | (if $on == "prompt" then [$rs[] | select((.on // "prompt") == "subagent" and .active
+              and ((.once // false) and ($fired[.id] // false) | not))] else [] end) as $sub
         | {fired: $nf,
-           text: (if ($show | length) > 0
-                  then (if $on == "subagent" then "Usage plan (before dispatching a subagent):" else "Usage plan (active):" end)
-                       + ([$show[] | "\n- [\(.id)] \(.do)"] | join(""))
-                  elif $on == "prompt" then "Usage plan: \($rs | length) rule(s), none active now."
-                  else "" end)}
+           text: ([ (if ($show | length) > 0
+                     then (if $on == "subagent" then "Usage plan (before dispatching a subagent):" else "Usage plan (active):" end)
+                          + ([$show[] | "\n- [\(.id)] \(.do)"] | join(""))
+                     else empty end),
+                    (if ($sub | length) > 0
+                     then "Usage plan (when you dispatch a subagent, do this before the call):"
+                          + ([$sub[] | "\n- [\(.id)] \(.do)"] | join(""))
+                     else empty end)
+                  ] | join("\n")
+                  | if . == "" and $on == "prompt" then "Usage plan: \($rs | length) rule(s), none active now." else . end)}
       end' "$plan" 2>/dev/null)"
   if [[ -z $out ]]; then
     rules="Usage plan: unreadable, ignored (not valid JSON). Fix it with /usage-aware:usage-plan."

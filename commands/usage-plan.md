@@ -27,7 +27,7 @@ Build it with one shell command per step. Don't write JSON or files yourself; th
 3. Run `~/.claude/usage-aware/usage-plan commit ${CLAUDE_SESSION_ID}`. It validates the draft and saves it as the plan.
 
 `id` is a short kebab-case name. `when` is the condition and `do` is the one-line instruction to yourself. Two optional flags:
-- `--subagent`: deliver the rule only right before you dispatch a subagent, instead of with every prompt.
+- `--subagent`: the rule is about dispatching subagents. It is listed under its own "when you dispatch a subagent" header instead of as a general instruction.
 - `--once`: deliver the rule only when its condition first becomes true. It re-arms if the condition turns false again.
 
 A condition is `always`, or comparisons joined with `and` / `or` (no parentheses; `and` binds tighter). A comparison is `<variable> <op> <number>`, where `<op>` is one of `<`, `<=`, `>`, `>=`, `==`, and the number may end in `k` or `M`, e.g. `tokens_left < 5M and reset_5h_min > 30`. A comparison on a variable that's currently unset is false.
@@ -47,7 +47,7 @@ A condition is `always`, or comparisons joined with `and` / `or` (no parentheses
 Guidelines:
 - Use the smallest set of rules that covers the request, at most 12. Each `do` is under 300 characters, concrete, and says what to do, not why.
 - Use the user's own numbers. Don't invent thresholds they didn't ask for. If a number is needed and the request doesn't give one, ask instead of guessing.
-- Intent that no measurement can trigger (habits like "estimate each task's tokens before dispatching subagents") becomes an `always` rule, with `"on": "subagent"` when it's about subagents.
+- Intent that no measurement can trigger (habits like "estimate each task's tokens before dispatching subagents") becomes an `always` rule, with `--subagent` when it's about subagents.
 - The current measurements above show the scale (for example, how many tokens are left now). Use them to sanity-check numbers, but not to change what the user asked for.
 - If `rule` or `commit` reports errors, fix that rule with another `rule` command (same id), then `commit` again.
 

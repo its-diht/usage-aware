@@ -46,10 +46,14 @@ out=$(bash "$US" S1)
 assert_contains "usage line first" "[usage] 5h: 34% left" "$(head -1 <<<"$out")"
 assert_contains "header" "Usage plan (active):" "$out"
 assert_contains "prompt rule" "- [p] on prompts" "$out"
-assert_not_contains "subagent rule held back" "before subagents" "$out"
+assert_contains "subagent rule listed ahead of dispatch" $'Usage plan (when you dispatch a subagent, do this before the call):\n- [s] before subagents' "$out"
+assert_not_contains "subagent rule not in the prompt block" $'on prompts\n- [s]' "$out"
 assert_not_contains "inactive rule hidden" "never" "$out"
 out=$(bash "$US" S1 --on subagent --rules-only)
 assert_eq "subagent delivery" $'Usage plan (before dispatching a subagent):\n- [s] before subagents' "$out"
+plan '{"rules":[{"id":"off","when":"pct_5h < 1","do":"never"}]}'
+plan '{"rules":[{"id":"s","when":"always","on":"subagent","do":"sub only"}]}'
+assert_eq "only subagent rules: rules block is just them" $'Usage plan (when you dispatch a subagent, do this before the call):\n- [s] sub only' "$(bash "$US" S1 --rules-only)"
 plan '{"rules":[{"id":"off","when":"pct_5h < 1","do":"never"}]}'
 assert_contains "none active: says so" "Usage plan: 1 rule(s), none active now." "$(bash "$US" S1)"
 assert_eq "none active before subagent: silent" "" "$(bash "$US" S1 --on subagent --rules-only)"
