@@ -3,6 +3,9 @@ import { expect, test } from 'claude-code/testing'
 // The engine beneath the plugin: env, clock, files, store and commands are answered here.
 const NOW = Date.parse('2030-01-01T00:00:00Z')
 const iso = (secs: number) => new Date(NOW + secs * 1000).toISOString()
+// What the engine's clock and session id answer; each engine() starts them over.
+let clock = NOW
+let sessionId = 'sess-A'
 
 function engine(
   on: any,
@@ -12,8 +15,10 @@ function engine(
   store: Record<string, unknown> = {},
 ) {
   const files: Record<string, string> = {}
+  clock = NOW
+  sessionId = 'sess-A'
   on('env.get', (_: any, e: { name: string }) => ({ value: env[e.name] }))
-  on('clock.now', () => ({ value: NOW }))
+  on('clock.now', () => ({ value: clock }))
   on('fs.write', (_: any, e: { path: string; text: string }) => ((files[e.path] = e.text), { value: undefined }))
   on('fs.read', (_: any, e: { path: string }) => {
     if (!(e.path in files)) throw new Error(`ENOENT: ${e.path}`)
@@ -24,7 +29,7 @@ function engine(
       .filter(f => f.startsWith(e.path + '/') && !f.slice(e.path.length + 1).includes('/'))
       .map(f => ({ name: f.slice(e.path.length + 1), kind: 'file', size: files[f].length })),
   }))
-  on('session.id', () => ({ value: 'sess-A' }))
+  on('session.id', () => ({ value: sessionId }))
   on('store.get', (_: any, e: { key: string }) => ({ value: store[e.key] }))
   on('store.set', (_: any, e: { key: string; value: unknown }) => ((store[e.key] = e.value), { value: undefined }))
   on('store.delete', (_: any, e: { key: string }) => (delete store[e.key], { value: undefined }))
@@ -75,9 +80,10 @@ test('session.measure writes state.json in the schema usage-status reads', async
   expect(state).toEqual({
     updated_at: NOW / 1000,
     source: 'mod',
-    five_hour: { used_percentage: 66, resets_at: NOW / 1000 + 6600 },
-    seven_day: { used_percentage: 29.5, resets_at: NOW / 1000 + 356400 },
+    five_hour: { used_percentage: 66, resets_at: NOW / 1000 + 6600, recent: [[NOW / 1000, 66]] },
+    seven_day: { used_percentage: 29.5, resets_at: NOW / 1000 + 356400, recent: [[NOW / 1000, 29.5]] },
     spend_limit: { used_percentage: 12, resets_at: null },
+    session_id: 'sess-A',
     session_tokens: 0,
   })
   expect(JSON.parse(files['/ua/mod.json'])).toEqual({ heartbeat: NOW / 1000 })
@@ -109,6 +115,28 @@ test('defaults to ~/.claude/usage-aware', async ($, on) => {
   const files = engine(on, { HOME: '/home/u' })
   await measure($, [{ kind: 'five_hour', percentUsed: 1, resetsAt: iso(60) }])
   expect(files['/home/u/.claude/usage-aware/state.json']).toBeDefined()
+})
+
+test('a non-default CLAUDE_CONFIG_DIR gets its own runtime dir (one per account)', async ($, on) => {
+  const files = engine(on, { HOME: '/home/u', CLAUDE_CONFIG_DIR: '/home/u/.claude-alt/' })
+  await measure($, [{ kind: 'five_hour', percentUsed: 1, resetsAt: iso(60) }])
+  expect(files['/home/u/.claude-alt/usage-aware/state.json']).toBeDefined()
+  expect(files['/home/u/.claude/usage-aware/state.json']).toBe(undefined)
+})
+
+test('CLAUDE_CONFIG_DIR set to the default dir keeps ~/.claude/usage-aware', async ($, on) => {
+  const files = engine(on, { HOME: '/home/u', CLAUDE_CONFIG_DIR: '/home/u/.claude' })
+  await measure($, [{ kind: 'five_hour', percentUsed: 1, resetsAt: iso(60) }])
+  expect(files['/home/u/.claude/usage-aware/state.json']).toBeDefined()
+})
+
+test('context is written per session, beside the shared state', async ($, on) => {
+  const files = engine(on, { USAGE_AWARE_DIR: '/ua' })
+  await measure($, lims(10, 2), 0, 85000)
+  expect(JSON.parse(files['/ua/contexts/sess-A.json'])).toEqual({ context_tokens: 85000, at: NOW / 1000 })
+  expect(state(files).session_id).toBe('sess-A')
+  await measure($, [], 0, 90000) // no rate limits yet: context still recorded
+  expect(JSON.parse(files['/ua/contexts/sess-A.json']).context_tokens).toBe(90000)
 })
 
 test('bars above the prompt show what is left, on every surface', async ($, on) => {
@@ -151,7 +179,17 @@ test('learns tokens per 1% from cost per point moved and tokens per dollar', asy
   await turn($, 400000, 'agent-1') // subagent turns count too
   await measure($, lims(12, 3), 1.0, 85000)
   const s = state(files)
-  expect(s.five_hour).toEqual({ used_percentage: 12, resets_at: NOW / 1000 + 6600, tokens_per_pct: 500000, samples: 1 })
+  expect(s.five_hour).toEqual({
+    used_percentage: 12,
+    resets_at: NOW / 1000 + 6600,
+    usd_per_pct: 0.5,
+    tokens_per_pct: 500000,
+    samples: 1,
+    recent: [
+      [NOW / 1000, 10],
+      [NOW / 1000, 12],
+    ],
+  })
   expect(s.seven_day.tokens_per_pct).toBe(1000000)
   expect(s.context_tokens).toBe(85000)
   expect([s.session_tokens, s.session_usd]).toEqual([1000000, 1.0])
@@ -200,7 +238,14 @@ test('no cost figure: no estimate, state still written', async ($, on) => {
   await measure($, lims(10, 2))
   await turn($, 100000)
   await measure($, lims(20, 4))
-  expect(state(files).five_hour).toEqual({ used_percentage: 20, resets_at: NOW / 1000 + 6600 })
+  expect(state(files).five_hour).toEqual({
+    used_percentage: 20,
+    resets_at: NOW / 1000 + 6600,
+    recent: [
+      [NOW / 1000, 10],
+      [NOW / 1000, 20],
+    ],
+  })
   expect(state(files).session_usd).toBe(undefined)
 })
 
@@ -226,4 +271,81 @@ test('calibration written by another session is picked up', async ($, on) => {
   store.cal = { usdPerPct: { five_hour: { v: 2, n: 4 } }, tokPerUsd: 1000 }
   await measure($, lims(10.5, 2), 0.1)
   expect(state(files).five_hour.tokens_per_pct).toBe(2000)
+})
+
+test('tokens per dollar is blended into the saved figure, not replaced', async ($, on) => {
+  const store: Record<string, unknown> = { cal: { usdPerPct: {}, tokPerUsd: 200000 } }
+  engine(on, { USAGE_AWARE_DIR: '/ua' }, [], false, store)
+  await measure($, lims(10, 2), 0)
+  await turn($, 1000000)
+  await measure($, lims(10, 2), 1.0) // this session: 1M tokens per dollar
+  expect((store.cal as any).tokPerUsd).toBe(0.7 * 200000 + 0.3 * 1000000)
+  await turn($, 1000000)
+  await measure($, lims(10, 2), 2.0) // still blended against the figure the session started with
+  expect((store.cal as any).tokPerUsd).toBe(0.7 * 200000 + 0.3 * 1000000)
+})
+
+// ---- cost per step -----------------------------------------------------------
+
+const ctxFile = (files: Record<string, string>, id = 'sess-A') => JSON.parse(files[`/ua/contexts/${id}.json`])
+
+test('cost per main-loop step, with subagent spend charged to it', async ($, on) => {
+  const files = engine(on, { USAGE_AWARE_DIR: '/ua' })
+  await measure($, lims(10, 2), 0, 50000)
+  expect(ctxFile(files).usd_per_step).toBe(undefined)
+  await turn($, 1000)
+  await turn($, 1000)
+  await turn($, 1000, 'agent-1') // a subagent's call is not a step, but its cost counts
+  await measure($, lims(10, 2), 0.2, 60000)
+  expect(ctxFile(files).usd_per_step).toBe(undefined) // only 2 main steps: no sample yet
+  await turn($, 1000)
+  await measure($, lims(10, 2), 0.9, 70000)
+  expect(ctxFile(files)).toEqual({ context_tokens: 70000, usd_per_step: 0.3, at: NOW / 1000 })
+  expect(state(files).usd_per_step).toBe(0.3)
+  for (let i = 0; i < 3; i++) await turn($, 1000)
+  await measure($, lims(10, 2), 2.1, 80000) // $0.40/step: smoothed
+  expect(Math.abs(ctxFile(files).usd_per_step - (0.7 * 0.3 + 0.3 * 0.4)) < 1e-9).toBe(true)
+})
+
+test('cost per step starts over for a new session id (after /clear)', async ($, on) => {
+  const files = engine(on, { USAGE_AWARE_DIR: '/ua' })
+  await measure($, lims(10, 2), 0)
+  for (let i = 0; i < 3; i++) await turn($, 1000)
+  await measure($, lims(10, 2), 0.9)
+  expect(ctxFile(files).usd_per_step).toBe(0.3)
+  sessionId = 'sess-B'
+  for (let i = 0; i < 3; i++) await turn($, 1000)
+  await measure($, lims(10, 2), 1.2, 1000)
+  expect(ctxFile(files, 'sess-B')).toEqual({ context_tokens: 1000, at: NOW / 1000 }) // re-based, no sample yet
+  for (let i = 0; i < 3; i++) await turn($, 1000)
+  await measure($, lims(10, 2), 1.5, 2000)
+  expect(Math.abs(ctxFile(files, 'sess-B').usd_per_step - 0.1) < 1e-9).toBe(true)
+})
+
+// ---- recent history ------------------------------------------------------------
+
+test('recent history: kept two hours, unchanged readings thinned, cleared on reset', async ($, on) => {
+  const store: Record<string, unknown> = {}
+  const files = engine(on, { USAGE_AWARE_DIR: '/ua' }, [], false, store)
+  const t0 = NOW / 1000
+  const at = async (secs: number, h: number) => {
+    clock = NOW + secs * 1000
+    await measure($, [{ kind: 'five_hour', percentUsed: h, resetsAt: iso(6600) }])
+    return state(files).five_hour.recent
+  }
+  await at(0, 10)
+  expect(await at(60, 10)).toEqual([[t0, 10]]) // unchanged within 5 minutes: not recorded
+  expect(await at(400, 10)).toEqual([[t0, 10], [t0 + 400, 10]])
+  expect(await at(500, 12)).toEqual([[t0, 10], [t0 + 400, 10], [t0 + 500, 12]])
+  expect(await at(7700, 12)).toEqual([[t0 + 500, 12], [t0 + 7700, 12]]) // over two hours old: dropped
+  expect((store.hist as any).five_hour.pts).toEqual([[t0 + 500, 12], [t0 + 7700, 12]]) // shared via the store
+  expect(await at(7800, 1)).toEqual([[t0 + 7800, 1]]) // the window reset
+})
+
+test('recent history written by another session is extended', async ($, on) => {
+  const t0 = NOW / 1000
+  const store: Record<string, unknown> = { hist: { five_hour: { resetsAt: iso(6600), pts: [[t0 - 3600, 40]] } } }
+  const files = engine(on, { USAGE_AWARE_DIR: '/ua' }, [], false, store)
+  await measure($, [{ kind: 'five_hour', percentUsed: 66, resetsAt: iso(6600) }])
+  expect(state(files).five_hour.recent).toEqual([[t0 - 3600, 40], [t0, 66]])
 })

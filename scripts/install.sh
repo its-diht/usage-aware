@@ -3,15 +3,16 @@
 # Never edits settings.json itself.
 here="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")"
 source "$here/lib.sh"
-settings="${CLAUDE_SETTINGS:-$HOME/.claude/settings.json}"
+settings="${CLAUDE_SETTINGS:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json}"
 
 if ! ua_have_jq; then
   echo "usage-aware: jq is required but not found. Install it first (e.g. sudo apt install jq, sudo pacman -S jq, brew install jq), then re-run." >&2
   exit 1
 fi
 
-ua_sync "$(dirname "$here")" || { echo "usage-aware: could not write $UA_DIR" >&2; exit 1; }
-echo "Synced scripts to $UA_DIR"
+ua_sync "$(dirname "$here")" || { echo "usage-aware: could not write $UA_BIN_DIR" >&2; exit 1; }
+echo "Synced scripts to $UA_BIN_DIR"
+echo "This account's usage data lives in $UA_DIR"
 
 rule="Bash($UA_DISPLAY_DIR/usage-status *)"
 old_sl="" have_rule=""

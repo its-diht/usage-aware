@@ -23,7 +23,7 @@ plan="$UA_PLANS/$sid.json" pstate="$UA_PLANS/$sid.state.json"
 now="${UA_NOW:-$(date +%s)}"
 
 vars() {
-  [[ -f "$UA_STATE" ]] && jq -c --argjson now "$now" "$UA_JQ_DUR$UA_JQ_FACTS"' facts.vars' "$UA_STATE" 2>/dev/null || echo '{}'
+  [[ -f "$UA_STATE" ]] && jq -c --argjson now "$now" --arg sid "$sid" --rawfile sessraw "$(ua_session_file "$sid")" "$UA_JQ_DUR$UA_JQ_FACTS"' facts.vars' "$UA_STATE" 2>/dev/null || echo '{}'
 }
 
 # Readable plan; with $1 = vars JSON, marks each rule active/inactive.

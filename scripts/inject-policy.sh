@@ -11,8 +11,8 @@ if ! ua_have_jq; then
 fi
 
 ua_sync "${CLAUDE_PLUGIN_ROOT:-$(dirname "$here")}"
-# The mod can't delete files: prune week-old session cost files and two-week-old plans.
-find "$UA_DIR/sessions" -maxdepth 1 -name '*.json' -mtime +7 -delete 2>/dev/null
+# The mod can't delete files: prune week-old session cost and context files, and two-week-old plans.
+find "$UA_DIR/sessions" "$UA_CONTEXTS" -maxdepth 1 -name '*.json' -mtime +7 -delete 2>/dev/null
 find "$UA_PLANS" -maxdepth 1 -name '*.json' -mtime +14 -delete 2>/dev/null
 
 sid="$(jq -r '.session_id // ""' <<<"$input" 2>/dev/null)"
@@ -47,9 +47,9 @@ The user's Claude plan has a 5-hour and a 7-day usage window (plus a \`spend\` w
 
 How to read it:
 - **N% left, resets X:** what's left in each window, and when it refills.
-- **(~N tok):** estimated tokens left in that window. It's learned from how far the % moves per dollar of usage, then converted at the tokens per dollar seen so far. It's plan-independent, so size work in tokens: 10% on one plan can be far more work than on another. It's an estimate: it counts every Claude Code session on this machine, can run low when the account is also used elsewhere, and is missing until calibrated.
-- **at avg rate out in X:** at the window's average rate so far, it runs out before it resets.
-- **≈N steps at Xk context:** tokens left in the tighter window divided by your current context. Each model call (one tool use and its reply) costs about one full context, so this shrinks as context grows and recovers after /compact. A subagent costs its own context per step, plus its result added to yours.
+- **(~N tok):** estimated tokens left in that window. It's learned from how far the % moves per dollar of usage, then converted at the tokens per dollar seen so far. It's plan-independent, so size work in tokens: 10% on one plan can be far more work than on another. It's an estimate: it counts every Claude Code session of this account on this machine, can run low when the account is also used elsewhere, and is missing until calibrated.
+- **at recent rate out in X:** at the rate the window moved over about the last hour (all of this account's sessions), it runs out before it resets. Idle time slows it. Before there's 15 minutes of history, **at avg rate out in X** uses the window's average rate since it began instead.
+- **≈N steps (~\$X/step):** about how many more of your own model calls (one tool use and its reply) fit in the tighter window: dollars left in it divided by what this session has been spending per main-loop call, with what its subagents spent charged to those calls. It drops faster as context grows or when you spawn costly subagents, and recovers after /compact. Until this session has a few calls to go on, it shows **≈N steps at Xk context** instead: tokens left divided by your current context, since each call costs about one full context.
 - **N old / stale:** the age of the reading. "usage unknown" means no data yet (it appears after your first response) or an API-key account.
 
 $plan_note

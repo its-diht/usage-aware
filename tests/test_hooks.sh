@@ -113,9 +113,14 @@ echo "inject-policy: prunes week-old session cost files"
 mkdir -p "$USAGE_AWARE_DIR/sessions"
 echo '{}' >"$USAGE_AWARE_DIR/sessions/old.json"; touch -d '8 days ago' "$USAGE_AWARE_DIR/sessions/old.json"
 echo '{}' >"$USAGE_AWARE_DIR/sessions/new.json"
+mkdir -p "$USAGE_AWARE_DIR/contexts"
+echo '{}' >"$USAGE_AWARE_DIR/contexts/old.json"; touch -d '8 days ago' "$USAGE_AWARE_DIR/contexts/old.json"
+echo '{}' >"$USAGE_AWARE_DIR/contexts/new.json"
 echo '{}' | bash "$IP" >/dev/null
 assert_true "old file pruned" test ! -e "$USAGE_AWARE_DIR/sessions/old.json"
 assert_true "recent file kept" test -f "$USAGE_AWARE_DIR/sessions/new.json"
+assert_true "old context file pruned" test ! -e "$USAGE_AWARE_DIR/contexts/old.json"
+assert_true "recent context file kept" test -f "$USAGE_AWARE_DIR/contexts/new.json"
 unset CLAUDE_PLUGIN_ROOT
 
 echo "step 4: missing jq"

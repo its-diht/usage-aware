@@ -3,7 +3,7 @@
 Keeps Claude Code aware of your remaining **5-hour** and **7-day** plan usage, as plain facts on every prompt, and lets you tell it what to do about usage with a **usage plan** written in your own words.
 
 ```
-[usage] 5h: 34% left (~4.1M tok), resets 1h50m, at avg rate out in 1h37m · 7d: 80% left (~120M tok), resets 3d11h · ≈48 steps at 85k context · 40s old
+[usage] 5h: 34% left (~4.1M tok), resets 1h50m, at recent rate out in 1h18m · 7d: 80% left (~120M tok), resets 3d11h · ≈48 steps (~$0.36/step) · 40s old
 Usage plan (active):
 - [handoff] Finish the current unit, write HANDOFF.md (done / next / open issues), then stop and report.
 ```
@@ -23,7 +23,7 @@ Usage plan (active):
    claude plugin install usage-aware@usage-aware
    ```
    or from a local checkout, by adding its path to `CLAUDE_CODE_PLUGIN_DIRS` (`:`-separated) in the `env` block of `~/.claude/settings.json`, or with `claude --plugin-dir <path>`.
-2. Optional, so Claude's mid-turn checks don't stop for approval: add this permission rule to `~/.claude/settings.json`.
+2. Optional, so Claude's mid-turn checks don't stop for approval: add this permission rule to `~/.claude/settings.json` (for an account with its own `CLAUDE_CONFIG_DIR`, to that directory's `settings.json`; the path in the rule stays the same).
    ```json
    { "permissions": { "allow": ["Bash(~/.claude/usage-aware/usage-status *)"] } }
    ```
@@ -68,14 +68,15 @@ Typing `/usage-plan` autocompletes to the full name.
 | `pct_5h`, `pct_7d`, `pct_spend` | % left in the window |
 | `tok_5h`, `tok_7d` | estimated tokens left in the window |
 | `tokens_left` | the smaller of the two |
-| `steps` | `tokens_left` ÷ current context (≈ model calls left) |
+| `steps` | ≈ Claude's own model calls left: dollars left ÷ this session's cost per call (see [Steps](#steps)) |
 | `context` | current context size, in tokens |
 | `reset_5h_min`, `reset_7d_min` | minutes until the window resets |
 | `runway_5h_min`, `runway_7d_min` | minutes until it runs out at its average rate so far |
+| `runway_recent_5h_min`, `runway_recent_7d_min` | minutes until it runs out at its rate over about the last hour |
 | `out_before_reset_5h`, `out_before_reset_7d` | 1 if it runs out before resetting at that rate |
 | `age_min` | age of the reading, in minutes |
 
-Plans are per session and live in `~/.claude/usage-aware/plans/<session id>.json`. They survive resume and `/clear`, are not copied to forks, and are deleted after two weeks unused. You can edit the JSON by hand: `~/.claude/usage-aware/usage-plan check <session id>` validates it, and an invalid plan is ignored with a note to Claude.
+Plans are per session and live in `~/.claude/usage-aware/plans/<session id>.json` (see [Several accounts](#several-accounts) for other config dirs). They survive resume and `/clear`, are not copied to forks, and are deleted after two weeks unused. You can edit the JSON by hand: `~/.claude/usage-aware/usage-plan check <session id>` validates it, and an invalid plan is ignored with a note to Claude.
 
 Anytime, in a shell: `~/.claude/usage-aware/usage-status [session id]`.
 
@@ -91,14 +92,14 @@ Claude Code ──session.measure──▶ bundled mod ──writes──▶ ~/.
                                                          (mid-turn)
 ```
 
-The mod receives Claude Code's own rate-limit readings after each turn, and mid-turn whenever a window moves by a whole point. It writes them to `state.json` with the time of the reading, so the age shown is the age of real data. It also draws the remaining-usage bars above the prompt. Claude sees usage in three layers:
+The mod receives Claude Code's own rate-limit readings after each turn, and mid-turn whenever a window moves by a whole point. It writes them to `state.json` with the time of the reading, so the age shown is the age of real data. It also draws the remaining-usage bars above the prompt. Claude sees usage in four layers:
 
 1. **Session start** (also after `/clear`, `/compact`, resume, fork): how to read the numbers, and whether a plan is set.
 2. **Every prompt:** the usage line, plus the plan's active rules.
 3. **Mid-turn:** during long work, Claude runs `usage-status <session id>` before major steps and before spawning subagents.
 4. **Before a subagent:** the plan's active "before subagents" rules.
 
-"at avg rate out in X" appears when, at the window's average rate since it began, it would run out before resetting. This is judged once 10% of the window has passed. A window whose reset time has passed counts as 100% left. Data older than 30 minutes is tagged `stale`.
+"at recent rate out in X" appears when, at the rate the window moved over about the last hour, it would run out before resetting. The mod keeps two hours of readings per window in its store (per account, shared by its sessions), and `usage-status` compares the % used now with the reading about an hour back, against the clock, so idle time lowers the rate. It needs 15 minutes of history; until then, "at avg rate out in X" uses the window's average rate since it began, judged once 10% of the window has passed. A window whose reset time has passed counts as 100% left. Data older than 30 minutes is tagged `stale`.
 
 ### Token estimate
 
@@ -108,9 +109,23 @@ The same % is a very different amount of work on Pro, Max and Ultra, so the plug
 - It counts the tokens of every model response, subagents included, to get tokens per dollar.
 - Tokens left = % left × dollars per 1% × tokens per dollar.
 
-Samples are smoothed (EMA), outliers are clamped after a few samples, a window reset re-anchors instead of sampling, and the calibration is saved across sessions in the mod's store. `≈N steps at Xk context` divides the tighter window's tokens by the current context size, since each model call costs about one context. Claude is told to size work in tokens/steps.
+Samples are smoothed (EMA), outliers are clamped after a few samples, a window reset re-anchors instead of sampling, and the calibration is saved across sessions in the mod's store. Tokens per dollar depends a lot on the model, so each session's figure is blended into the saved one (30%) rather than replacing it. Claude is told to size work in tokens/steps.
 
-Caveats: no estimate appears until the first whole point of movement. Each session writes its running cost to `~/.claude/usage-aware/sessions/`, and calibration sums all of them, so parallel Claude Code sessions on this machine are accounted for. Use elsewhere (claude.ai, other devices) moves the % with no cost seen, so the estimate can run low, which errs on the safe side; after 3 samples such outliers are clamped.
+### Steps
+
+`≈N steps (~$0.36/step)` estimates how many more of Claude's own model calls fit in the tighter window: dollars left in the window (% left × dollars per 1%) divided by what this session has spent per main-loop call, measured every 3 calls and smoothed. A subagent's calls aren't steps, but what they cost is charged to the main-loop calls, so a session that spawns heavy subagents sees its steps fall faster. Cached context is cheap, so this follows real cost better than counting tokens.
+
+Until a session has 3 calls to go on (and again after `/clear`), it shows `≈N steps at 85k context`: the tighter window's tokens divided by the current context size, since each call reads about one context. Context and cost per step are per session (`contexts/<session id>.json`), so parallel sessions each see their own.
+
+Caveats: no estimate appears until the first whole point of movement. Each session writes its running cost to `~/.claude/usage-aware/sessions/`, and calibration sums all of them, so parallel Claude Code sessions of this account on this machine are accounted for. Use elsewhere (claude.ai, other devices) moves the % with no cost seen, so the estimate can run low, which errs on the safe side; after 3 samples such outliers are clamped.
+
+### Several accounts
+
+Usage, plans and session costs belong to one account, so each Claude config dir keeps its own data: `~/.claude/usage-aware/` for the default one, and `$CLAUDE_CONFIG_DIR/usage-aware/` when you run Claude Code with another `CLAUDE_CONFIG_DIR` (e.g. a second account in `~/.claude-alt`). The scripts Claude runs (`usage-status`, `usage-plan`) stay in `~/.claude/usage-aware/` for every account and pick the data dir from `CLAUDE_CONFIG_DIR`, so the permission rule and `/usage-aware:usage-plan` are the same everywhere. The calibration lives in the mod's store, which is already per config dir.
+
+## Upgrading from 0.4
+
+0.5 changes `steps` to a cost-based estimate (see [Steps](#steps)); plans that use it keep working, but the number can differ from before. It also moves a non-default account's data to `$CLAUDE_CONFIG_DIR/usage-aware/`, so that account starts with fresh usage data and without its old plans; its calibration is kept. Before 0.5, two accounts on one machine shared `~/.claude/usage-aware/`, and their readings and costs mixed.
 
 ## Upgrading from 0.3
 
@@ -120,7 +135,7 @@ Caveats: no estimate appears until the first whole point of movement. Each sessi
 
 1. Remove the permission rule (and the plugin path from `CLAUDE_CODE_PLUGIN_DIRS`, if you used that) from `~/.claude/settings.json`.
 2. `claude plugin uninstall usage-aware@usage-aware`
-3. `rm -r ~/.claude/usage-aware` (this includes any plans)
+3. `rm -r ~/.claude/usage-aware` (this includes any plans), plus `$CLAUDE_CONFIG_DIR/usage-aware` for any other account you used it with
 
 ## Development
 

@@ -49,10 +49,11 @@ A condition is `always`, or comparisons joined with `and` / `or` (no parentheses
 | `pct_5h`, `pct_7d`, `pct_spend` | % left in the window |
 | `tok_5h`, `tok_7d` | estimated tokens left in the window |
 | `tokens_left` | the smaller of `tok_5h` and `tok_7d` |
-| `steps` | `tokens_left` ÷ current context (about one model call each) |
+| `steps` | about how many more of your own model calls fit: dollars left ÷ this session's recent cost per call (subagent spend included), or `tokens_left` ÷ current context before that is known |
 | `context` | current context size, in tokens |
 | `reset_5h_min`, `reset_7d_min` | minutes until the window resets |
 | `runway_5h_min`, `runway_7d_min` | minutes until the window runs out at its average rate so far |
+| `runway_recent_5h_min`, `runway_recent_7d_min` | minutes until the window runs out at its rate over about the last hour (unset while idle or with under 15 minutes of history) |
 | `out_before_reset_5h`, `out_before_reset_7d` | 1 if the window runs out before it resets at that rate, else 0 |
 | `age_min` | age of the usage reading, in minutes |
 

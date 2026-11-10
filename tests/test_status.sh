@@ -111,6 +111,69 @@ out=$(bash "$US")
 assert_contains "reset window: full estimate" "5h: 100% left (~90k tok) (reset)" "$out"
 assert_not_contains "no context: no steps" "steps" "$out"
 
+echo "usage-status: context is per session"
+setup_dir; mkdir -p "$USAGE_AWARE_DIR/contexts"
+printf '{"updated_at":%d,"session_id":"B","five_hour":{"used_percentage":66,"resets_at":%d,"tokens_per_pct":120000},"context_tokens":20000}\n' \
+  "$now" "$((now+6600))" >"$USAGE_AWARE_DIR/state.json"
+echo '{"context_tokens":170000,"at":1}' >"$USAGE_AWARE_DIR/contexts/A.json"
+assert_contains "own context file wins over another session's state" "≈24 steps at 170k context" "$(bash "$US" A)"
+assert_eq "steps var uses it too" 24 "$(bash "$UP" context A | sed -n 's/^  steps = //p')"
+assert_contains "writer of state.json uses its context" "≈204 steps at 20k context" "$(bash "$US" B)"
+assert_not_contains "other session, no file: no steps rather than wrong ones" "steps" "$(bash "$US" C)"
+assert_contains "no session named: last writer's context" "at 20k context" "$(bash "$US")"
+echo 'garbage{' >"$USAGE_AWARE_DIR/contexts/A.json"
+assert_not_contains "unreadable session file: no steps" "steps" "$(bash "$US" A)"
+
+echo "usage-status: steps from cost per step"
+setup_dir; mkdir -p "$USAGE_AWARE_DIR/contexts"
+# 5h: 34% left at $0.05/pct = $1.70; 7d: 80% at $2/pct = $160. Tighter: $1.70.
+printf '{"updated_at":%d,"five_hour":{"used_percentage":66,"resets_at":%d,"usd_per_pct":0.05,"tokens_per_pct":120000},"seven_day":{"used_percentage":20,"resets_at":%d,"usd_per_pct":2},"context_tokens":85000}\n' \
+  "$now" "$((now+6600))" "$((now+300060))" >"$USAGE_AWARE_DIR/state.json"
+assert_contains "no step cost yet: tokens / context" "≈48 steps at 85k context" "$(bash "$US" A)"
+echo '{"context_tokens":85000,"usd_per_step":0.25,"at":1}' >"$USAGE_AWARE_DIR/contexts/A.json"
+assert_contains "dollars left / dollars per step" "≈6 steps (~\$0.25/step)" "$(bash "$US" A)"
+assert_eq "steps var" 6 "$(bash "$UP" context A | sed -n 's/^  steps = //p')"
+assert_eq "tokens_left unchanged" 4080000 "$(bash "$UP" context A | sed -n 's/^  tokens_left = //p')"
+echo '{"usd_per_step":0.034,"at":1}' >"$USAGE_AWARE_DIR/contexts/A.json"
+assert_contains "cents padded" "≈50 steps (~\$0.03/step)" "$(bash "$US" A)"
+jq -c '. + {session_id: "B", usd_per_step: 1.5}' "$USAGE_AWARE_DIR/state.json" >"$USAGE_AWARE_DIR/s" && mv "$USAGE_AWARE_DIR/s" "$USAGE_AWARE_DIR/state.json"
+assert_contains "writer of state.json uses its step cost" "≈1 steps (~\$1.50/step)" "$(bash "$US" B)"
+assert_not_contains "other session: no steps at all without its context" "steps" "$(bash "$US" C)"
+
+echo "usage-status: recent burn rate"
+# recent <5h used now> <history JSON>: 5h window 3h10m in, resetting in 1h50m (avg rate: out in 1h37m)
+recent() {
+  printf '{"updated_at":%d,"five_hour":{"used_percentage":%s,"resets_at":%d,"recent":%s}}\n' \
+    "$now" "$1" "$((now+6600))" "$2" >"$USAGE_AWARE_DIR/state.json"
+}
+setup_dir
+recent 66 "[[$((now-3600)),40]]"   # 26 points in the last hour: 34% lasts 1h18m
+assert_contains "recent rate replaces avg" "5h: 34% left, resets 1h50m, at recent rate out in 1h18m ·" "$(bash "$US")"
+assert_eq "runway_recent_5h_min" 78.5 "$(var runway_recent_5h_min)"
+assert_eq "avg runway var kept" 97.9 "$(var runway_5h_min)"
+recent 66 "[[$((now-3600)),60]]"   # 6 points an hour: lasts past the reset
+out=$(bash "$US")
+assert_not_contains "recent rate on pace: no runway text (not even avg)" "out in" "$out"
+assert_eq "runway_recent_5h_min when on pace" 340 "$(var runway_recent_5h_min)"
+recent 66 "[[$((now-3600)),66]]"
+assert_not_contains "idle hour: nothing" "out in" "$(bash "$US")"
+assert_eq "idle: runway_recent unset" "" "$(var runway_recent_5h_min)"
+recent 66 "[[$((now-5400)),30],[$((now-3700)),50],[$((now-1800)),60]]"
+assert_eq "baseline: latest reading an hour or more back" 131 "$(var runway_recent_5h_min)"
+recent 66 "[[$((now-1200)),60]]"   # 20 minutes of history is enough
+assert_eq "short history from 15 min" 113.3 "$(var runway_recent_5h_min)"
+recent 66 "[[$((now-600)),60]]"
+assert_contains "under 15 min of history: avg rate" "at avg rate out in 1h37m" "$(bash "$US")"
+assert_eq "under 15 min: runway_recent unset" "" "$(var runway_recent_5h_min)"
+recent 66 "[[$((now-8000)),10]]"
+assert_contains "history over 2h old ignored" "at avg rate out in 1h37m" "$(bash "$US")"
+recent 66 '"junk"'
+assert_contains "malformed history ignored" "at avg rate out in 1h37m" "$(bash "$US")"
+recent 100 "[[$((now-3600)),40]]"
+assert_contains "exhausted: limit reached, no runway text" "5h: 0% left (limit reached), resets 1h50m ·" "$(bash "$US")"
+bash "$UP" begin S1 x >/dev/null
+assert_eq "plans can use runway_recent_5h_min" "" "$(bash "$UP" rule S1 r 'runway_recent_5h_min < 60' 'slow down' | grep -i 'not added')"
+
 echo "usage-status: retries a half-written state file"
 setup_dir; state 5 10 3600 10 86400
 good="$(cat "$USAGE_AWARE_DIR/state.json")"; echo '{"updated_' >"$USAGE_AWARE_DIR/state.json"

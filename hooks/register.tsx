@@ -12,15 +12,25 @@ const perPct = atom({ plugin: 'usage-aware', key: 'perPct' } as const, {} as Per
 
 // ---- data source ---------------------------------------------------------
 
-type Window = { used_percentage: number; resets_at: number | null; tokens_per_pct?: number; samples?: number } | null
+type Window = {
+  used_percentage: number
+  resets_at: number | null
+  usd_per_pct?: number
+  tokens_per_pct?: number
+  samples?: number
+  recent?: Point[]
+} | null
 
-const toWindow = (all: Limits, kind: string, cal?: Cal): Window => {
+const toWindow = (all: Limits, kind: string, cal?: Cal, hist?: Hist): Window => {
   const l = all.find(x => x.kind === kind)
   if (!l) return null
   const t = l.resetsAt ? Date.parse(l.resetsAt) : NaN
   const w: Window = { used_percentage: l.percentUsed, resets_at: Number.isFinite(t) ? Math.floor(t / 1000) : null }
+  const u = cal?.usdPerPct[kind]
+  if (u) w.usd_per_pct = u.v
   const tpp = cal && tokensPerPct(cal, kind)
-  if (tpp) Object.assign(w, { tokens_per_pct: tpp, samples: cal!.usdPerPct[kind].n })
+  if (tpp) Object.assign(w, { tokens_per_pct: tpp, samples: u!.n })
+  if (hist?.[kind]?.pts.length) w.recent = hist[kind].pts
   return w
 }
 
@@ -32,8 +42,8 @@ const toWindow = (all: Limits, kind: string, cal?: Cal): Window => {
 type Cal = { usdPerPct: Record<string, { v: number; n: number }>; tokPerUsd: number | null }
 const CAL_KINDS = ['five_hour', 'seven_day']
 const MIN_DP = 1 // % points per sample; percentUsed has one decimal, so ~10% sample error
-const MIN_USD = 0.25 // session spend before its tokens/$ replaces the saved one
-const ALPHA = 0.3 // weight of a new sample
+const MIN_USD = 0.25 // session spend before its tokens/$ is blended into the saved one
+const ALPHA = 0.3 // weight of a new sample (and of a session's tokens/$ against the saved one)
 const BAND = 3 // after 3 samples, a sample is clamped to [v/BAND, v*BAND]
 
 const tokensPerPct = (cal: Cal, kind: string) => {
@@ -69,11 +79,85 @@ function calibrate(cal: Cal, anchors: Record<string, Anchor>, kind: string, l: L
   return true
 }
 
+// ---- cost per step ---------------------------------------------------------
+// "Steps left" = dollars left in the window / dollars per step. A step is one
+// main-loop model call, charged with everything the session spent meanwhile,
+// subagents included: how many more of Claude's own calls, working as it has been.
+
+const MIN_STEPS = 3 // main-loop steps per sample
+
+type StepCost = { sid: string | null; base: { usd: number; steps: number } | null; v: number | null }
+
+// One sample per MIN_STEPS main steps, smoothed; starts over for a new session id (after /clear).
+function sampleStepCost(sc: StepCost, sid: string | null, usd: number, steps: number) {
+  if (sc.sid !== sid) Object.assign(sc, { sid, base: null, v: null })
+  if (!sc.base || usd < sc.base.usd || steps < sc.base.steps) {
+    sc.base = { usd, steps }
+    return
+  }
+  const ds = steps - sc.base.steps
+  const du = usd - sc.base.usd
+  if (ds < MIN_STEPS || du <= 0) return
+  sc.base = { usd, steps }
+  sc.v = sc.v === null ? du / ds : sc.v * (1 - ALPHA) + (du / ds) * ALPHA
+}
+
+// ---- recent history ----------------------------------------------------------
+// [time, % used] per window over the last two hours, for the recent burn rate
+// (usage-status does the math against the clock). Kept in the store, so it is
+// per account and shared by this account's sessions; a window reset starts it over.
+
+type Point = [number, number]
+type Hist = Record<string, { resetsAt?: string; pts: Point[] }>
+const HIST_KEEP = 7200 // seconds of history kept
+const HIST_EVERY = 300 // an unchanged % is recorded at most this often
+const HIST_MAX = 120
+
+async function recordHistory($: EngineInterface, all: Limits, now: number): Promise<Hist> {
+  const saved = (await $.store.get('hist')) as Hist | undefined
+  const h: Hist = saved && typeof saved === 'object' ? { ...saved } : {}
+  let changed = false
+  for (const kind of CAL_KINDS) {
+    const l = all.find(x => x.kind === kind)
+    if (!l) continue
+    const old = h[kind]
+    const pts0 = old && Array.isArray(old.pts) ? old.pts : []
+    const last = pts0[pts0.length - 1]
+    const resetMoved = old?.resetsAt && l.resetsAt && Math.abs(Date.parse(old.resetsAt) - Date.parse(l.resetsAt)) > 3600e3
+    const pts = resetMoved || (last && l.percentUsed < last[1]) ? [] : pts0.filter(p => now - p[0] <= HIST_KEEP)
+    const prev = pts[pts.length - 1]
+    if (!prev || prev[1] !== l.percentUsed || now - prev[0] >= HIST_EVERY) pts.push([now, l.percentUsed])
+    else if (pts.length === pts0.length) continue
+    h[kind] = { resetsAt: l.resetsAt, pts: pts.slice(-HIST_MAX) }
+    changed = true
+  }
+  if (changed) await $.store.set('hist', h)
+  return h
+}
+
 const sumUsage = (u: any) =>
   u ? (u.input_tokens ?? 0) + (u.output_tokens ?? 0) + (u.cache_read_input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0) : 0
 
-const runtimeDir = async ($: EngineInterface): Promise<string> =>
-  (await $.env.get('USAGE_AWARE_DIR')) || `${await $.env.get('HOME')}/.claude/usage-aware`
+// Per account, matching scripts/lib.sh: a non-default CLAUDE_CONFIG_DIR gets its own runtime dir.
+// (The mod's $.store already lives under the config dir, so calibration is per account too.)
+const runtimeDir = async ($: EngineInterface): Promise<string> => {
+  const explicit = await $.env.get('USAGE_AWARE_DIR')
+  if (explicit) return explicit
+  const home = await $.env.get('HOME')
+  const config = (await $.env.get('CLAUDE_CONFIG_DIR'))?.replace(/\/+$/, '')
+  return config && config !== `${home}/.claude` ? `${config}/usage-aware` : `${home}/.claude/usage-aware`
+}
+
+const safeId = (id: string) => id.replace(/[^A-Za-z0-9_-]/g, '_')
+
+// The live session id, asked fresh: /clear starts a new session in the same process.
+const currentId = async ($: EngineInterface) => {
+  try {
+    return safeId(await $.session.id()) || null
+  } catch {
+    return null
+  }
+}
 
 const heartbeat = async ($: EngineInterface, dir: string, nowSecs: number) =>
   $.fs.write(`${dir}/mod.json`, JSON.stringify({ heartbeat: nowSecs }) + '\n')
@@ -103,7 +187,8 @@ const describe = (all: Limits, now: number, est: PerPct = {}) =>
     : all
         .map(l => {
           const left = Math.min(100, Math.max(0, 100 - l.percentUsed))
-          const tok = est[l.kind] ? ` (~${fmtTok(left * est[l.kind])})` : ''
+          const per = est[l.kind]
+          const tok = per ? ` (~${fmtTok(left * per)})` : ''
           return `${LABELS[l.kind] ?? l.kind} ${bar(left)} ${left.toFixed(0)}% left${tok}${resetIn(l.resetsAt, now)}`
         })
         .join('   ')
@@ -116,6 +201,9 @@ type Session = {
   anchors: Record<string, Anchor>
   tokens: number // this process's tokens, from every model response (main and subagents)
   ratioBase: { tok: number; usd: number } | null
+  tokBase: number | null | undefined // saved tokens/$ when this process first measured
+  mainSteps: number // this process's main-loop model calls
+  stepCost: StepCost
   id: string | null
 }
 
@@ -158,7 +246,7 @@ async function sessionKey($: EngineInterface, st: Session) {
     try {
       id = await $.session.id()
     } catch {}
-    st.id = (id || Math.random().toString(36).slice(2)).replace(/[^A-Za-z0-9_-]/g, '_')
+    st.id = safeId(id || Math.random().toString(36).slice(2))
   }
   return st.id
 }
@@ -173,7 +261,16 @@ async function publishEst($: EngineInterface, c: Cal) {
 }
 
 export const register: Register = on => {
-  const st: Session = { cal: null, anchors: {}, tokens: 0, ratioBase: null, id: null }
+  const st: Session = {
+    cal: null,
+    anchors: {},
+    tokens: 0,
+    ratioBase: null,
+    tokBase: undefined,
+    mainSteps: 0,
+    stepCost: { sid: null, base: null, v: null },
+    id: null,
+  }
 
   // Count every model response as it lands (main loop and subagents), so a
   // turn's tokens are in before the measurement that follows it.
@@ -181,6 +278,7 @@ export const register: Register = on => {
     const r = yield* next(e)
     try {
       st.tokens += sumUsage(r?.usage)
+      if (!e.agentId && r?.usage) st.mainSteps++
     } catch {}
     return r
   })
@@ -211,8 +309,11 @@ export const register: Register = on => {
     const dir = await runtimeDir($)
     const now = Math.floor((await $.clock.now()) / 1000)
     const c = await loadCal($, st)
+    if (st.tokBase === undefined) st.tokBase = c.tokPerUsd
+    const sid = await currentId($)
     const usd = e.cost?.usd
     if (typeof usd === 'number') {
+      sampleStepCost(st.stepCost, sid, usd, st.mainSteps)
       let changed = false
       const pooled = await pooledUsd($, dir, await sessionKey($, st), usd, now)
       for (const kind of CAL_KINDS) {
@@ -223,7 +324,8 @@ export const register: Register = on => {
       const du = usd - st.ratioBase.usd
       const dt = st.tokens - st.ratioBase.tok
       if (du >= MIN_USD && dt > 0) {
-        c.tokPerUsd = dt / du
+        // Blended, not replaced: tokens/$ differs a lot between models, so one session can't flip it.
+        c.tokPerUsd = st.tokBase ? st.tokBase * (1 - ALPHA) + (dt / du) * ALPHA : dt / du
         changed = true
       }
       if (changed) {
@@ -231,15 +333,29 @@ export const register: Register = on => {
         await publishEst($, c)
       }
     }
+    // Context and cost per step belong to this session, not the account: usage-status <sid> reads
+    // them from here, since state.json is overwritten by whichever session measured last.
+    const ctx = e.context?.tokens
+    const perStep = st.stepCost.sid === sid ? st.stepCost.v : null
+    const mine: Record<string, number> = {}
+    if (typeof ctx === 'number') mine.context_tokens = ctx
+    if (perStep !== null) mine.usd_per_step = perStep
+    if (sid && Object.keys(mine).length > 0) {
+      try {
+        await $.fs.write(`${dir}/contexts/${sid}.json`, JSON.stringify({ ...mine, at: now }) + '\n')
+      } catch {}
+    }
     if (e.rateLimits.length > 0) {
+      const hist = await recordHistory($, e.rateLimits, now)
       const state: Record<string, unknown> = {
         updated_at: now,
         source: 'mod',
-        five_hour: toWindow(e.rateLimits, 'five_hour', c),
-        seven_day: toWindow(e.rateLimits, 'seven_day', c),
+        five_hour: toWindow(e.rateLimits, 'five_hour', c, hist),
+        seven_day: toWindow(e.rateLimits, 'seven_day', c, hist),
         spend_limit: toWindow(e.rateLimits, 'spend_limit'),
       }
-      if (typeof e.context?.tokens === 'number') state.context_tokens = e.context.tokens
+      if (sid) state.session_id = sid
+      Object.assign(state, mine)
       // Diagnostics: this process's counted tokens and the session's cost.
       state.session_tokens = st.tokens
       if (typeof usd === 'number') state.session_usd = usd

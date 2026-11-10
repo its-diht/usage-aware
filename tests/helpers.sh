@@ -5,7 +5,7 @@ PASS=0 FAIL=0
 
 setup_dir() {  # fresh isolated runtime dir per test
   export USAGE_AWARE_DIR; USAGE_AWARE_DIR="$(mktemp -d)"
-  unset USAGE_AWARE_NEXT
+  unset USAGE_AWARE_NEXT CLAUDE_CONFIG_DIR
 }
 
 ok()   { PASS=$((PASS+1)); printf '  ok   %s\n' "$1"; }
