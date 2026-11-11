@@ -92,7 +92,7 @@ Claude Code ──session.measure──▶ bundled mod ──writes──▶ ~/.
                                                          (mid-turn)
 ```
 
-The mod receives Claude Code's own rate-limit readings after each turn, and mid-turn whenever a window moves by a whole point. It writes them to `state.json` with the time of the reading, so the age shown is the age of real data. It also draws the remaining-usage bars above the prompt. Claude sees usage in four layers:
+The mod receives Claude Code's own rate-limit readings after each turn, and mid-turn whenever a window moves by a whole point. It writes them to `state.json` with the time of the reading, so the age shown is the age of real data. It also draws the remaining-usage bars above the prompt, one per window with about how many steps are left in it (`5h ███░░░░░░░ 34% left (≈68 steps) ↻1h50m`, counted as in [Steps](#steps)). Claude sees usage in four layers:
 
 1. **Session start** (also after `/clear`, `/compact`, resume, fork): how to read the numbers, and whether a plan is set.
 2. **Every prompt:** the usage line, plus the plan's active rules.
@@ -115,7 +115,7 @@ Samples are smoothed (EMA), outliers are clamped after a few samples, a window r
 
 `≈N steps (~$0.36/step)` estimates how many more of Claude's own model calls fit in the tighter window: dollars left in the window (% left × dollars per 1%) divided by what this session has spent per main-loop call, measured every 3 calls and smoothed. A subagent's calls aren't steps, but what they cost is charged to the main-loop calls, so a session that spawns heavy subagents sees its steps fall faster. Cached context is cheap, so this follows real cost better than counting tokens.
 
-Until a session has 3 calls to go on (and again after `/clear`), it shows `≈N steps at 85k context`: the tighter window's tokens divided by the current context size, since each call reads about one context. Context and cost per step are per session (`contexts/<session id>.json`), so parallel sessions each see their own.
+A session keeps its step cost across restarts, resumes and `/reload-plugins` (it's saved in its context file). Until a session has 3 calls to go on (and again after `/clear`, which starts a new session), it shows `≈N steps at 85k context`: the tighter window's tokens divided by the current context size, since each call reads about one context. Context and cost per step are per session (`contexts/<session id>.json`), so parallel sessions each see their own.
 
 Caveats: no estimate appears until the first whole point of movement. Each session writes its running cost to `~/.claude/usage-aware/sessions/`, and calibration sums all of them, so parallel Claude Code sessions of this account on this machine are accounted for. Use elsewhere (claude.ai, other devices) moves the % with no cost seen, so the estimate can run low, which errs on the safe side; after 3 samples such outliers are clamped.
 

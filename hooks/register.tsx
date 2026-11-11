@@ -3,12 +3,18 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { Limits, PerPct } from '../types'
+import type { Limits, PerPct, StepBasis } from '../types'
 
 const limits = atom({ plugin: 'usage-aware', key: 'limits' } as const, [] as Limits)
 const color = atom({ plugin: 'usage-aware', key: 'color' } as const, null)
 // Estimated tokens per 1% of each window, once calibrated.
 const perPct = atom({ plugin: 'usage-aware', key: 'perPct' } as const, {} as PerPct)
+// This session's basis for steps left, so the bars can show steps per window.
+const stepBasis = atom({ plugin: 'usage-aware', key: 'stepBasis' } as const, {
+  usdPerPct: {},
+  usdPerStep: null,
+  context: null,
+} as StepBasis)
 
 // ---- data source ---------------------------------------------------------
 
@@ -51,9 +57,6 @@ const tokensPerPct = (cal: Cal, kind: string) => {
   return u && cal.tokPerUsd ? Math.round(u.v * cal.tokPerUsd) : undefined
 }
 
-const fmtTok = (n: number) =>
-  n >= 1e6 ? `${(n / 1e6).toFixed(n >= 1e7 ? 0 : 1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}k` : `${Math.round(n)}`
-
 type Anchor = { usd: number; pct: number; resetsAt?: string }
 // One calibration step for one window; returns whether `cal` changed.
 function calibrate(cal: Cal, anchors: Record<string, Anchor>, kind: string, l: Limits[number], usd: number) {
@@ -88,9 +91,11 @@ const MIN_STEPS = 3 // main-loop steps per sample
 
 type StepCost = { sid: string | null; base: { usd: number; steps: number } | null; v: number | null }
 
-// One sample per MIN_STEPS main steps, smoothed; starts over for a new session id (after /clear).
-function sampleStepCost(sc: StepCost, sid: string | null, usd: number, steps: number) {
-  if (sc.sid !== sid) Object.assign(sc, { sid, base: null, v: null })
+// One sample per MIN_STEPS main steps, smoothed. A session id this process hasn't seen starts
+// from `seed`: the figure saved in its context file by an earlier process (restart, resume,
+// reload), or none for a new session (/clear).
+function sampleStepCost(sc: StepCost, sid: string | null, usd: number, steps: number, seed: number | null) {
+  if (sc.sid !== sid) Object.assign(sc, { sid, base: null, v: seed })
   if (!sc.base || usd < sc.base.usd || steps < sc.base.steps) {
     sc.base = { usd, steps }
     return
@@ -191,15 +196,24 @@ const resetIn = (iso: string | undefined, now: number) => {
   return ` ↻${mins}m`
 }
 
-const describe = (all: Limits, now: number, est: PerPct = {}) =>
+// Steps left in a window, as usage-status counts them: dollars left / dollars per step once this
+// session has a step cost, else tokens left / context; null when neither is known.
+const stepsLeft = (left: number, kind: string, tokPerPct: PerPct, b: StepBasis): number | null => {
+  const usd = b.usdPerPct[kind]
+  if (usd && b.usdPerStep) return Math.floor((left * usd) / b.usdPerStep)
+  const tok = tokPerPct[kind]
+  return tok && b.context ? Math.floor((left * tok) / b.context) : null
+}
+
+const describe = (all: Limits, now: number, est: PerPct = {}, basis?: StepBasis) =>
   all.length === 0
     ? 'usage left: waiting for first reply'
     : all
         .map(l => {
           const left = Math.min(100, Math.max(0, 100 - l.percentUsed))
-          const per = est[l.kind]
-          const tok = per ? ` (~${fmtTok(left * per)})` : ''
-          return `${LABELS[l.kind] ?? l.kind} ${bar(left)} ${left.toFixed(0)}% left${tok}${resetIn(l.resetsAt, now)}`
+          const n = basis ? stepsLeft(left, l.kind, est, basis) : null
+          const steps = n === null ? '' : ` (≈${n} ${n === 1 ? 'step' : 'steps'})`
+          return `${LABELS[l.kind] ?? l.kind} ${bar(left)} ${left.toFixed(0)}% left${steps}${resetIn(l.resetsAt, now)}`
         })
         .join('   ')
 
@@ -263,6 +277,26 @@ async function sessionKey($: EngineInterface, st: Session) {
   return st.id
 }
 
+// This session's figures from an earlier process: contexts/<sid>.json, or {} when there are none.
+async function sessionFile($: EngineInterface, dir: string, sid: string | null): Promise<Record<string, unknown>> {
+  if (!sid) return {}
+  try {
+    const o = JSON.parse(String(await $.fs.read(`${dir}/contexts/${sid}.json`)))
+    return o && typeof o === 'object' ? o : {}
+  } catch {
+    return {}
+  }
+}
+
+const posNum = (v: unknown) => (typeof v === 'number' && v > 0 ? v : null)
+
+async function publishBasis($: EngineInterface, c: Cal, st: Session, sid: string | null, context: number | null) {
+  const usdPerPct: PerPct = {}
+  for (const k of CAL_KINDS) if (c.usdPerPct[k]) usdPerPct[k] = c.usdPerPct[k].v
+  const usdPerStep = st.stepCost.sid === sid ? st.stepCost.v : null
+  await update($, stepBasis, () => ({ usdPerPct, usdPerStep, context }))
+}
+
 async function publishEst($: EngineInterface, c: Cal) {
   const est: PerPct = {}
   for (const k of CAL_KINDS) {
@@ -312,7 +346,13 @@ export const register: Register = on => {
     // Display only: these figures may predate this session, so they are not persisted.
     const usage = await $.session.usage()
     await update($, limits, () => usage.rateLimits)
-    await publishEst($, await loadCal($, st))
+    const c = await loadCal($, st)
+    await publishEst($, c)
+    // Pick up this session's step cost and context from before a restart, resume or reload.
+    const sid = await currentId($)
+    const before = await sessionFile($, await runtimeDir($), sid)
+    if (st.stepCost.sid !== sid) Object.assign(st.stepCost, { sid, base: null, v: posNum(before.usd_per_step) })
+    await publishBasis($, c, st, sid, posNum(usage.context?.tokens) ?? posNum(before.context_tokens))
     return r
   })
 
@@ -325,7 +365,8 @@ export const register: Register = on => {
     const sid = await currentId($)
     const usd = e.cost?.usd
     if (typeof usd === 'number') {
-      sampleStepCost(st.stepCost, sid, usd, st.mainSteps)
+      const seed = st.stepCost.sid === sid ? null : posNum((await sessionFile($, dir, sid)).usd_per_step)
+      sampleStepCost(st.stepCost, sid, usd, st.mainSteps, seed)
       let changed = false
       const pooled = await pooledUsd($, dir, await sessionKey($, st), usd, now)
       for (const kind of CAL_KINDS) {
@@ -348,6 +389,7 @@ export const register: Register = on => {
     // Context and cost per step belong to this session, not the account: usage-status <sid> reads
     // them from here, since state.json is overwritten by whichever session measured last.
     const ctx = e.context?.tokens
+    await publishBasis($, c, st, sid, posNum(ctx))
     const perStep = st.stepCost.sid === sid ? st.stepCost.v : null
     const mine: Record<string, number> = {}
     if (typeof ctx === 'number') mine.context_tokens = ctx
@@ -395,7 +437,7 @@ export const register: Register = on => {
     if (e.props.hasSurvey) return next(e)
     const { Box, Text } = $.ui.resolve(e)
     const c = await read($, color)
-    const text = describe(await read($, limits), await $.clock.now(), await read($, perPct))
+    const text = describe(await read($, limits), await $.clock.now(), await read($, perPct), await read($, stepBasis))
     return <Box>{c ? <Text color={c}>{text}</Text> : <Text dimColor>{text}</Text>}</Box>
   })
 }

@@ -195,7 +195,7 @@ test('learns tokens per 1% from cost per point moved and tokens per dollar', asy
   expect([s.session_tokens, s.session_usd]).toEqual([1000000, 1.0])
   expect((store.cal as any).tokPerUsd).toBe(1000000)
   const ui = await $.ui.mount({ plugin: 'usage-aware', surface: 'terminal', component: 'AbovePrompt', props: {} as any })
-  expect((await ui.find({ type: 'Text', text: /5h/ }))?.text).toContain('88% left (~44M)')
+  expect((await ui.find({ type: 'Text', text: /5h/ }))?.text).toContain('88% left (≈517 steps)') // 88 × 500k tok / 85k context
   await ui.unmount()
 })
 
@@ -387,4 +387,54 @@ test('a later window end is a reset, even if the % barely moved', async ($, on) 
   engine(on, { USAGE_AWARE_DIR: '/ua' }, [], false, store)
   await measure($, [{ kind: 'five_hour', percentUsed: 1, resetsAt: iso(18060) }])
   expect((store.hist as any).five_hour).toEqual({ resetsAt: iso(18060), pts: [[t0, 1]] })
+})
+
+// ---- step cost across restarts, and steps in the bars ---------------------------
+
+const bars = async ($: any) => {
+  const ui = await $.ui.mount({ plugin: 'usage-aware', surface: 'terminal', component: 'AbovePrompt', props: {} as any })
+  const text = (await ui.find({ type: 'Text', text: /left/ }))?.text
+  await ui.unmount()
+  return text
+}
+
+test('a restarted process keeps the step cost saved for its session', async ($, on) => {
+  const files = engine(on, { USAGE_AWARE_DIR: '/ua' })
+  files['/ua/contexts/sess-A.json'] = JSON.stringify({ context_tokens: 1000, usd_per_step: 0.3, at: 1 })
+  await measure($, lims(10, 2), 5.0, 2000) // first reading of this process: no samples of its own yet
+  expect(ctxFile(files)).toEqual({ context_tokens: 2000, usd_per_step: 0.3, at: NOW / 1000 })
+  for (let i = 0; i < 3; i++) await turn($, 1000)
+  await measure($, lims(10, 2), 6.2, 3000) // $0.40/step, smoothed onto the saved figure
+  expect(Math.abs(ctxFile(files).usd_per_step - (0.7 * 0.3 + 0.3 * 0.4)) < 1e-9).toBe(true)
+})
+
+test('the bars show steps left per window from the saved step cost at session start', async ($, on) => {
+  const store: Record<string, unknown> = {
+    cal: { usdPerPct: { five_hour: { v: 0.5, n: 5 }, seven_day: { v: 4, n: 5 } }, tokPerUsd: 100000 },
+  }
+  const files = engine(on, { USAGE_AWARE_DIR: '/ua' }, lims(66, 20), false, store)
+  files['/ua/contexts/sess-A.json'] = JSON.stringify({ context_tokens: 80000, usd_per_step: 0.25, at: 1 })
+  await start($)
+  const text = await bars($)
+  expect(text).toContain('5h ███░░░░░░░ 34% left (≈68 steps) ↻1h50m') // 34 × $0.50 / $0.25
+  expect(text).toContain('week ████████░░ 80% left (≈1280 steps)') // 80 × $4 / $0.25
+})
+
+test('the bars fall back to tokens / context, and show no steps without either', async ($, on) => {
+  const store: Record<string, unknown> = { cal: { usdPerPct: { five_hour: { v: 0.5, n: 5 } }, tokPerUsd: 100000 } }
+  engine(on, { USAGE_AWARE_DIR: '/ua' }, [], false, store)
+  await start($)
+  await measure($, lims(66, 20), 0, 25000)
+  const text = await bars($)
+  expect(text).toContain('34% left (≈68 steps)') // 34 × 50k tok per 1% / 25k context
+  expect(text).toContain('80% left ↻') // no calibration for the week yet: no steps
+})
+
+test('a new session after /clear does not inherit the step cost', async ($, on) => {
+  const files = engine(on, { USAGE_AWARE_DIR: '/ua' })
+  files['/ua/contexts/sess-A.json'] = JSON.stringify({ usd_per_step: 0.3, at: 1 })
+  await measure($, lims(10, 2), 0, 1000)
+  sessionId = 'sess-B'
+  await measure($, lims(10, 2), 0, 1000)
+  expect(ctxFile(files, 'sess-B')).toEqual({ context_tokens: 1000, at: NOW / 1000 })
 })

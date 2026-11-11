@@ -21,7 +21,7 @@ UA_STALE_SECS=1800
 UA_PLAN_MAX_RULES=12
 UA_PLAN_MAX_DO=300
 UA_SYNC_FILES=(usage-status usage-plan ua-lib.sh)
-UA_VERSION=0.5.0   # = plugin.json version (tests check); ua_sync never replaces newer synced scripts
+UA_VERSION=0.5.1   # = plugin.json version (tests check); ua_sync never replaces newer synced scripts
 
 ua_have_jq() { command -v jq >/dev/null 2>&1; }
 
