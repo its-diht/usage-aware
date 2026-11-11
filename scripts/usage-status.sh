@@ -24,10 +24,8 @@ now="${UA_NOW:-$(date +%s)}"
 # ---- facts ----
 facts='{"vars":{},"line":""}'
 if [[ -f "$UA_STATE" ]]; then
-  sess="$(ua_session_file "$sid")"
   for _ in 1 2; do   # the mod may be mid-write; retry once
-    f="$(jq -c --argjson now "$now" --arg sid "$sid" --rawfile sessraw "$sess" "$UA_JQ_DUR$UA_JQ_FACTS"' facts' "$UA_STATE" 2>/dev/null)" \
-      && [[ -n $f ]] && { facts="$f"; break; }
+    f="$(ua_facts "$sid" facts 2>/dev/null)" && [[ -n $f ]] && { facts="$f"; break; }
     sleep 0.05
   done
   [[ $f == "$facts" ]] || facts='{"vars":{},"line":"[usage] usage unknown (state file unreadable)"}'

@@ -106,12 +106,16 @@ function sampleStepCost(sc: StepCost, sid: string | null, usd: number, steps: nu
 // [time, % used] per window over the last two hours, for the recent burn rate
 // (usage-status does the math against the clock). Kept in the store, so it is
 // per account and shared by this account's sessions; a window reset starts it over.
+// Each session measures with its own last API response, so a reading can be a little
+// older than what another session already stored: such a reading is skipped, never
+// taken for a reset.
 
 type Point = [number, number]
 type Hist = Record<string, { resetsAt?: string; pts: Point[] }>
 const HIST_KEEP = 7200 // seconds of history kept
 const HIST_EVERY = 300 // an unchanged % is recorded at most this often
 const HIST_MAX = 120
+const RESET_DROP = 5 // a fall of more than this many points is a reset, not a stale reading
 
 async function recordHistory($: EngineInterface, all: Limits, now: number): Promise<Hist> {
   const saved = (await $.store.get('hist')) as Hist | undefined
@@ -123,8 +127,14 @@ async function recordHistory($: EngineInterface, all: Limits, now: number): Prom
     const old = h[kind]
     const pts0 = old && Array.isArray(old.pts) ? old.pts : []
     const last = pts0[pts0.length - 1]
-    const resetMoved = old?.resetsAt && l.resetsAt && Math.abs(Date.parse(old.resetsAt) - Date.parse(l.resetsAt)) > 3600e3
-    const pts = resetMoved || (last && l.percentUsed < last[1]) ? [] : pts0.filter(p => now - p[0] <= HIST_KEEP)
+    // How far this reading's window end is from the stored one's: a later window is a reset,
+    // an earlier one a reading from before a reset that another session already saw.
+    const shift = old?.resetsAt && l.resetsAt ? Date.parse(l.resetsAt) - Date.parse(old.resetsAt) : 0
+    const earlier = shift < -3600e3
+    const reset = !earlier && (shift > 3600e3 || (!!last && last[1] - l.percentUsed > RESET_DROP))
+    const stale = earlier || (!!last && (l.percentUsed < last[1] || now < last[0]))
+    if (!reset && stale) continue
+    const pts = reset ? [] : pts0.filter(p => now - p[0] <= HIST_KEEP)
     const prev = pts[pts.length - 1]
     if (!prev || prev[1] !== l.percentUsed || now - prev[0] >= HIST_EVERY) pts.push([now, l.percentUsed])
     else if (pts.length === pts0.length) continue
@@ -240,6 +250,8 @@ async function pooledUsd($: EngineInterface, dir: string, id: string, usd: numbe
   }
 }
 
+// Cached on purpose, unlike currentId: the pooled-cost file must keep one key per process,
+// since the running cost carries over a /clear and a second file would count it twice.
 async function sessionKey($: EngineInterface, st: Session) {
   if (!st.id) {
     let id = ''

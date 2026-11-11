@@ -10,7 +10,7 @@ Usage plan (active):
 
 ## Requirements
 
-- **bash** and **jq** (`sudo apt install jq` / `sudo pacman -S jq` / `brew install jq`). Developed and tested on Linux.
+- **bash** and **jq** 1.5 or newer (`sudo apt install jq` / `sudo pacman -S jq` / `brew install jq`). Developed and tested on Linux.
 - A **Claude subscription** (Pro, Max, …) or a spend-limited Claude gateway. Claude Code only reports rate limits to these; API-key accounts see "usage unknown".
 - **Claude Code with plugin mods** (function hooks, early access): the bundled mod is the data source. If the mod can't load, Claude still gets the hooks' output, and you're told once per session that data isn't updating.
 - The **Claude Code CLI**. UserPromptSubmit context has been reported not to reach the model in the VS Code extension.
@@ -126,6 +126,8 @@ Usage, plans and session costs belong to one account, so each Claude config dir 
 ## Upgrading from 0.4
 
 0.5 changes `steps` to a cost-based estimate (see [Steps](#steps)); plans that use it keep working, but the number can differ from before. It also moves a non-default account's data to `$CLAUDE_CONFIG_DIR/usage-aware/`, so that account starts with fresh usage data and without its old plans; its calibration is kept. Before 0.5, two accounts on one machine shared `~/.claude/usage-aware/`, and their readings and costs mixed.
+
+With several accounts, update usage-aware in every config dir at the same time (e.g. `claude plugin update usage-aware@usage-aware`, then again with that account's `CLAUDE_CONFIG_DIR`). The scripts in `~/.claude/usage-aware/` are shared: 0.5 never replaces newer ones, but 0.4 replaces any, and its scripts read the old shared data dir.
 
 ## Upgrading from 0.3
 

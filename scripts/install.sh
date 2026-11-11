@@ -11,7 +11,11 @@ if ! ua_have_jq; then
 fi
 
 ua_sync "$(dirname "$here")" || { echo "usage-aware: could not write $UA_BIN_DIR" >&2; exit 1; }
-echo "Synced scripts to $UA_BIN_DIR"
+if [[ -n ${UA_SYNC_KEPT:-} ]]; then
+  echo "Kept the newer scripts (v$UA_SYNC_KEPT) in $UA_BIN_DIR; another account runs a newer usage-aware."
+else
+  echo "Synced scripts to $UA_BIN_DIR"
+fi
 echo "This account's usage data lives in $UA_DIR"
 
 rule="Bash($UA_DISPLAY_DIR/usage-status *)"

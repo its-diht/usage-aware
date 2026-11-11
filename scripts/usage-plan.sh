@@ -23,7 +23,7 @@ plan="$UA_PLANS/$sid.json" pstate="$UA_PLANS/$sid.state.json"
 now="${UA_NOW:-$(date +%s)}"
 
 vars() {
-  [[ -f "$UA_STATE" ]] && jq -c --argjson now "$now" --arg sid "$sid" --rawfile sessraw "$(ua_session_file "$sid")" "$UA_JQ_DUR$UA_JQ_FACTS"' facts.vars' "$UA_STATE" 2>/dev/null || echo '{}'
+  [[ -f "$UA_STATE" ]] && ua_facts "$sid" facts.vars 2>/dev/null || echo '{}'
 }
 
 # Readable plan; with $1 = vars JSON, marks each rule active/inactive.
@@ -67,7 +67,7 @@ case $cmd in
     echo "Session: $sid"
     echo "Plan file: $plan"
     echo "Current measurements (unset ones are missing):"
-    vars | jq -r 'to_entries | map("  \(.key) = \(.value | if . == (. | floor) then . else (. * 10 | round) / 10 end)") | join("\n") | if . == "" then "  (none yet)" else . end'
+    vars | jq -r 'def rnd: . + 0.5 | floor; to_entries | map("  \(.key) = \(.value | if . == (. | floor) then . else (. * 10 | rnd) / 10 end)") | join("\n") | if . == "" then "  (none yet)" else . end'
     if [[ -f $plan ]]; then echo "Current plan:"; render "$(vars)" "$plan"; else echo "Current plan: none"; fi
     ;;
   show)

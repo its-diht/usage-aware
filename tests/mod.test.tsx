@@ -349,3 +349,42 @@ test('recent history written by another session is extended', async ($, on) => {
   await measure($, [{ kind: 'five_hour', percentUsed: 66, resetsAt: iso(6600) }])
   expect(state(files).five_hour.recent).toEqual([[t0 - 3600, 40], [t0, 66]])
 })
+
+test("another session's slightly older reading leaves the shared history alone", async ($, on) => {
+  const t0 = NOW / 1000
+  const pts = [
+    [t0 - 3600, 30],
+    [t0 - 60, 40.1],
+  ]
+  const store: Record<string, unknown> = { hist: { five_hour: { resetsAt: iso(6600), pts } } }
+  const files = engine(on, { USAGE_AWARE_DIR: '/ua' }, [], false, store)
+  await measure($, [{ kind: 'five_hour', percentUsed: 40, resetsAt: iso(6600) }]) // this session's last reading
+  expect((store.hist as any).five_hour.pts).toEqual(pts)
+  expect(state(files).five_hour.recent).toEqual(pts) // still handed to usage-status
+})
+
+test('a reading timed before the last stored point is skipped', async ($, on) => {
+  const t0 = NOW / 1000
+  const pts = [[t0 + 30, 40]]
+  const store: Record<string, unknown> = { hist: { five_hour: { resetsAt: iso(6600), pts } } }
+  engine(on, { USAGE_AWARE_DIR: '/ua' }, [], false, store)
+  await measure($, [{ kind: 'five_hour', percentUsed: 41, resetsAt: iso(6600) }])
+  expect((store.hist as any).five_hour.pts).toEqual(pts)
+})
+
+test('a reading from the previous window (session idle across a reset) is ignored', async ($, on) => {
+  const t0 = NOW / 1000
+  const pts = [[t0 - 600, 2]] // the new window, stored by another session
+  const store: Record<string, unknown> = { hist: { five_hour: { resetsAt: iso(18000), pts } } }
+  engine(on, { USAGE_AWARE_DIR: '/ua' }, [], false, store)
+  await measure($, [{ kind: 'five_hour', percentUsed: 1, resetsAt: iso(60) }]) // old window's end: earlier
+  expect((store.hist as any).five_hour).toEqual({ resetsAt: iso(18000), pts })
+})
+
+test('a later window end is a reset, even if the % barely moved', async ($, on) => {
+  const t0 = NOW / 1000
+  const store: Record<string, unknown> = { hist: { five_hour: { resetsAt: iso(60), pts: [[t0 - 600, 3]] } } }
+  engine(on, { USAGE_AWARE_DIR: '/ua' }, [], false, store)
+  await measure($, [{ kind: 'five_hour', percentUsed: 1, resetsAt: iso(18060) }])
+  expect((store.hist as any).five_hour).toEqual({ resetsAt: iso(18060), pts: [[t0, 1]] })
+})

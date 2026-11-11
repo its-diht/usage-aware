@@ -1,6 +1,6 @@
 # usage-aware v0.4: usage facts and per-session usage plans (spec)
 
-Status: implemented in v0.4.0 (2026-11-05). Open questions resolved: `${CLAUDE_SESSION_ID}` is substituted in command files; PreToolUse `additionalContext` reaches the model; plugin commands need the full `/usage-aware:usage-plan` name; `/clear` changes the session id (SessionEnd reason `clear`), so the plan is carried via a pointer keyed by working directory; forks start without a plan.
+Status: implemented in v0.4.0 (2026-11-05). Since v0.5.0, data is per account (`$CLAUDE_CONFIG_DIR/usage-aware` for a non-default config dir), context and cost per step are per session (`contexts/<session_id>.json`), `steps` is cost-based, and a recent-rate runway was added; the measurement rows below are updated for that, and the README is the current reference. Open questions resolved: `${CLAUDE_SESSION_ID}` is substituted in command files; PreToolUse `additionalContext` reaches the model; plugin commands need the full `/usage-aware:usage-plan` name; `/clear` changes the session id (SessionEnd reason `clear`), so the plan is carried via a pointer keyed by working directory; forks start without a plan.
 
 ## Goal
 
@@ -18,7 +18,7 @@ The plugin stops deciding what Claude should do. The user decides, and the plugi
 The UserPromptSubmit hook and `usage-status` produce the same line:
 
 ```
-[usage] 5h: 29% left (~17M tok), resets 30m · 7d: 46% left (~284M tok), resets 5d9h, at avg rate out in 1d8h · ≈105 steps at 165k context · 1m old
+[usage] 5h: 29% left (~17M tok), resets 30m · 7d: 46% left (~284M tok), resets 5d9h, at recent rate out in 1d2h · ≈105 steps (~$0.36/step) · 1m old
 ```
 
 ### Measurements
@@ -30,10 +30,11 @@ All of these come from state.json and the clock. Each is also exposed as a varia
 | `pct_5h`, `pct_7d`, `pct_spend` | % left in each window (100 once the reset time has passed) | `used_percentage` |
 | `tok_5h`, `tok_7d` | estimated tokens left in each window | % left × `tokens_per_pct` (from v0.3) |
 | `tokens_left` | min of `tok_5h` and `tok_7d`; unset if neither has an estimate | |
-| `steps` | `tokens_left` / `context_tokens` | |
+| `steps` | dollars left / this session's cost per main-loop call; `tokens_left` / `context_tokens` until known | `usd_per_pct`, `usd_per_step` (v0.5) |
 | `context` | current context size, in tokens | `context_tokens` |
 | `reset_5h_min`, `reset_7d_min` | minutes until each window resets | `resets_at` |
 | `runway_5h_min`, `runway_7d_min` | minutes until the window runs out at its average rate so far; unset before 10% of the window has elapsed | the existing pace math |
+| `runway_recent_5h_min`, `runway_recent_7d_min` | minutes until the window runs out at its rate over about the last hour (unset while idle or with under 15 minutes of history) | the window's `recent` history (v0.5) |
 | `out_before_reset_5h`, `out_before_reset_7d` | 1 if the runway is shorter than the time to reset, else 0 | |
 | `age_min` | age of the data, in minutes | `updated_at` |
 

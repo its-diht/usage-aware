@@ -4,6 +4,7 @@ source "$(dirname "$0")/helpers.sh"
 IU="$SCRIPTS/inject-usage.sh"
 IP="$SCRIPTS/inject-policy.sh"
 now=$(date +%s)
+export UA_NOW=$now   # pinned clock: compared outputs can't straddle a second
 seed() { printf '{"updated_at":%d,"five_hour":{"used_percentage":66,"resets_at":%d},"seven_day":{"used_percentage":29,"resets_at":%d}}\n' \
   "$now" "$((now+6600))" "$((now+356400))" >"$USAGE_AWARE_DIR/state.json"; }
 
@@ -108,6 +109,24 @@ assert_eq "identical file not rewritten" "$m1" "$(stat -c %Y.%i "$USAGE_AWARE_DI
 echo '# plugin update' >>"$plugin/scripts/usage-status.sh"
 echo '{}' | bash "$IP" >/dev/null
 assert_true "changed file re-synced" cmp -s "$plugin/scripts/usage-status.sh" "$USAGE_AWARE_DIR/usage-status"
+
+echo "inject-policy: never downgrades the shared scripts"
+v=$(bash -c 'source "$1"; echo "$UA_VERSION"' _ "$SCRIPTS/lib.sh")
+sync_with() { # sync_with <first line of the synced ua-lib.sh>: whether inject-policy replaced it
+  printf '%s\n' "$1" >"$USAGE_AWARE_DIR/ua-lib.sh"; echo stale >"$USAGE_AWARE_DIR/usage-status"
+  echo '{}' | bash "$IP" >/dev/null
+  cmp -s "$plugin/scripts/lib.sh" "$USAGE_AWARE_DIR/ua-lib.sh" && echo replaced || echo kept
+}
+assert_eq "newer synced version kept" kept "$(sync_with 'UA_VERSION=99.0.0')"
+assert_eq "...and its usage-status too" stale "$(cat "$USAGE_AWARE_DIR/usage-status")"
+assert_eq "older synced version replaced" replaced "$(sync_with 'UA_VERSION=0.4.9   # comment')"
+assert_eq "unversioned (pre-0.5) replaced" replaced "$(sync_with 'UA_PLANS=x')"
+assert_eq "same version replaced when different" replaced "$(sync_with "UA_VERSION=$v")"
+source "$SCRIPTS/lib.sh"
+for c in "0.5.1 0.5.0 0" "0.5.0 0.5.0 1" "0.10.0 0.9.9 0" "1.0 0.9.9 0" "0.5 0.5.0 1" "0.4.7 0.5.0 1" "x 0.5.0 1"; do
+  read -r a b want <<<"$c"; ua_ver_gt "$a" "$b"; assert_eq "ua_ver_gt $a $b" "$want" "$?"
+done
+ua_ver_gt "" 0.5.0; assert_eq "ua_ver_gt '' 0.5.0 (no synced version)" 1 "$?"
 
 echo "inject-policy: prunes week-old session cost files"
 mkdir -p "$USAGE_AWARE_DIR/sessions"

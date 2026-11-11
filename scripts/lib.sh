@@ -21,6 +21,7 @@ UA_STALE_SECS=1800
 UA_PLAN_MAX_RULES=12
 UA_PLAN_MAX_DO=300
 UA_SYNC_FILES=(usage-status usage-plan ua-lib.sh)
+UA_VERSION=0.5.0   # = plugin.json version (tests check); ua_sync never replaces newer synced scripts
 
 ua_have_jq() { command -v jq >/dev/null 2>&1; }
 
@@ -39,16 +40,18 @@ UA_JQ_DUR='def dur: (if . < 0 then 0 else floor end) as $s
     elif $s >= 60 then "\($s/60|floor)m"
     else "\($s)s" end;'
 
-# jq: usage facts from state.json. Needs $now, $sid (session id or "") and $sessraw (ua_session_file). Defines:
+# jq: usage facts from state.json. Needs $now, $sid (session id or "") and $sessraw (the session file's text).
+# Run it with ua_facts, which binds all three. Defines:
 #   facts -> {vars: {name: number}, line: "[usage] ..."}   (unset vars are absent)
 # Window lengths for the average-rate runway, which is only judged once 10% of a window has passed.
 # The recent rate compares the % used now with the reading about an hour ago (from the window's
 # "recent" [time, %] history; at least 15 minutes back), measured against the clock, so idle time counts.
 UA_JQ_FACTS='
+def rnd: . + 0.5 | floor;   # round/0 is jq 1.6+; every value here is >= 0
 def pos: if type == "number" and . > 0 then . else null end;
-def ftok: if . >= 1e7 then "\(. / 1e6 | round)M" elif . >= 1e6 then "\((. / 1e5 | round) / 10)M"
-          elif . >= 1e3 then "\(. / 1e3 | round)k" else "\(round)" end;
-def fusd: (. * 100 | round) as $c | "$\($c / 100 | floor).\($c % 100 | if . < 10 then "0\(.)" else "\(.)" end)";
+def ftok: if . >= 1e7 then "\(. / 1e6 | rnd)M" elif . >= 1e6 then "\((. / 1e5 | rnd) / 10)M"
+          elif . >= 1e3 then "\(. / 1e3 | rnd)k" else "\(rnd)" end;
+def fusd: (. * 100 | rnd) as $c | "$\($c / 100 | floor).\($c % 100 | if . < 10 then "0\(.)" else "\(.)" end)";
 def win($len):
   if type != "object" or (.used_percentage | type) != "number" then null
   else .resets_at as $r
@@ -71,10 +74,10 @@ def win($len):
     | {left: $left, reset: $reset, ttr: $ttr, tok: $tok, usd: $usd, runway: $runway, out: (if $runway == null then null elif $runway < $ttr then 1 else 0 end),
        rate_known: ($rate != null), recent_runway: $recent}
   end;
-def wtxt($label):
-  if . == null then "\($label): n/a"
-  elif .reset then "\($label): 100% left" + (if .tok != null then " (~\(.tok | ftok) tok)" else "" end) + " (reset)"
-  else "\($label): \(.left | floor)% left"
+def wtxt($name):
+  if . == null then "\($name): n/a"
+  elif .reset then "\($name): 100% left" + (if .tok != null then " (~\(.tok | ftok) tok)" else "" end) + " (reset)"
+  else "\($name): \(.left | floor)% left"
     + (if .tok != null then " (~\(.tok | ftok) tok)" else "" end)
     + (if .left <= 0 then " (limit reached)" else "" end)
     + (if .ttr != null then ", resets \(.ttr | dur)" else "" end)
@@ -84,7 +87,7 @@ def wtxt($label):
   end;
 def facts:
   . as $s
-  | ($sessraw | try fromjson catch null | if type == "object" then . else {} end) as $sess
+  | ($sessraw | if . == "" then null else (try fromjson catch null) end | if type == "object" then . else {} end) as $sess
   | (.five_hour | win(18000)) as $h | (.seven_day | win(604800)) as $d
   | (if (.spend_limit | type) == "object" then (.spend_limit | win(null)) else null end) as $sp
   | ([$h.tok, $d.tok] | map(select(. != null)) | min) as $tl
@@ -133,7 +136,7 @@ def when_errors:
   end;
 def when_true($v):
   if test("^\\s*always\\s*$") then true
-  else [terms[] | [.[] | cmpparse as $m | ($m.n | tonumber) * ({"k": 1e3, "M": 1e6}[$m.sfx] // 1) as $n | $v[$m.var] as $x
+  else [terms[] | [.[] | cmpparse as $m | (($m.n | tonumber) * ({"k": 1e3, "M": 1e6}[$m.sfx] // 1)) as $n | $v[$m.var] as $x
                   | if $x == null then false
                     else {"<": ($x < $n), "<=": ($x <= $n), ">": ($x > $n), ">=": ($x >= $n), "==": ($x == $n)}[$m.op] end]
               | all] | any
@@ -147,7 +150,7 @@ def plan_errors:
             else ($r.when | when_errors | map("rule \($i + 1): " + .))
                + (if ($r.do | type) != "string" or ($r.do | length) == 0 then ["rule \($i + 1): missing \"do\""]
                   elif ($r.do | length) > '"$UA_PLAN_MAX_DO"' then ["rule \($i + 1): \"do\" over '"$UA_PLAN_MAX_DO"' characters"] else [] end)
-               + (if ($r.on // "prompt") | IN("prompt", "subagent") then [] else ["rule \($i + 1): \"on\" must be prompt or subagent"] end)
+               + (if ($r.on // "prompt") | (. == "prompt" or . == "subagent") then [] else ["rule \($i + 1): \"on\" must be prompt or subagent"] end)
                + (if ($r.once // false) | type == "boolean" then [] else ["rule \($i + 1): \"once\" must be true or false"] end)
                + (if ($r.do | type) == "string" and ($r.do | test("[\u0001-\u001f\u007f]")) then ["rule \($i + 1): \"do\" must be one line, without control characters"] else [] end)
                + (if ($r.id // "x") | type == "string" and test("^[A-Za-z0-9][A-Za-z0-9_-]{0,39}$") then [] else ["rule \($i + 1): \"id\" must be 1-40 letters, digits, - or _"] end)
@@ -160,16 +163,38 @@ def rid($i): (.id // "rule\($i + 1)");
 if [[ -z "${USAGE_AWARE_DIR:-}" ]]; then UA_DISPLAY_DIR="~/.claude/usage-aware"; else UA_DISPLAY_DIR="$UA_DIR"; fi
 
 # Path of this session's figures from the mod (contexts/<sid>.json), or /dev/null when there are none.
-# Callers pass it to the facts jq as --rawfile sessraw, so reading it costs no extra process.
 ua_session_file() {
   local f="$UA_CONTEXTS/$1.json"
   if [[ $1 =~ ^[A-Za-z0-9_-]{1,128}$ && -f $f ]]; then printf '%s\n' "$f"; else echo /dev/null; fi
 }
 
+# The facts program over state.json, its inputs bound: ua_facts <session id or ""> <jq filter, e.g. facts>.
+# Needs $now. The session file goes in as text ($(<file) runs no program), which also keeps jq 1.5 working.
+ua_facts() {
+  jq -c --argjson now "$now" --arg sid "$1" --arg sessraw "$(<"$(ua_session_file "$1")")" \
+    "$UA_JQ_DUR$UA_JQ_FACTS $2" "$UA_STATE"
+}
+
 # Copy plugin scripts to the fixed runtime path when they differ. Arg: plugin root.
+# ua_ver_gt A B: whether version A (x.y.z) is newer than B. Plain bash: sort -V isn't portable.
+ua_ver_gt() {
+  [[ $1 =~ ^[0-9]+(\.[0-9]+)*$ && $2 =~ ^[0-9]+(\.[0-9]+)*$ ]] || return 1
+  local IFS=. i; local -a a=($1) b=($2)
+  for ((i = 0; i < ${#a[@]} || i < ${#b[@]}; i++)); do
+    ((10#${a[i]:-0} > 10#${b[i]:-0})) && return 0
+    ((10#${a[i]:-0} < 10#${b[i]:-0})) && return 1
+  done
+  return 1
+}
+
+# The scripts at UA_BIN_DIR are shared by every account's install, which may run another
+# version: keep them when they're newer than this plugin (UA_SYNC_KEPT says which version).
 ua_sync() {
   local root="$1" name src dest tmp
   mkdir -p "$UA_BIN_DIR" || return 1
+  UA_SYNC_KEPT="$(sed -n 's/^UA_VERSION=\([0-9.]*\).*/\1/p' "$UA_BIN_DIR/ua-lib.sh" 2>/dev/null | head -1)"
+  ua_ver_gt "$UA_SYNC_KEPT" "$UA_VERSION" && return 0
+  UA_SYNC_KEPT=""
   for name in "${UA_SYNC_FILES[@]}"; do
     case $name in ua-lib.sh) src="$root/scripts/lib.sh" ;; *) src="$root/scripts/$name.sh" ;; esac
     dest="$UA_BIN_DIR/$name"

@@ -25,4 +25,5 @@ assert_eq "hooks.json names the mod module" "./register.tsx" "$(jq -r '.modules[
 assert_true "mod module exists" test -f "$ROOT/hooks/register.tsx"
 assert_eq "plugin.json types contract" "./types/index.d.ts" "$(jq -r .types "$ROOT/.claude-plugin/plugin.json")"
 assert_eq "versions match" "$(jq -r .version "$ROOT/.claude-plugin/plugin.json")" "$(jq -r '.plugins[0].version' "$ROOT/.claude-plugin/marketplace.json")"
+assert_eq "lib.sh UA_VERSION matches" "$(jq -r .version "$ROOT/.claude-plugin/plugin.json")" "$(bash -c 'source "$1"; echo "$UA_VERSION"' _ "$SCRIPTS/lib.sh")"
 finish
